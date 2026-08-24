@@ -34,22 +34,23 @@
 
 原站自选按钮（未登录态全表 30 行均为 `+` 态）：
 
-- `<a title="加[示例转债]为自选转债"><span class="jisilu-icons"></span></a>`
+- `<a title="加[示例转债]为自选转债"><span class="jisilu-icons">&#xE61E;</span></a>`
 - 锚点计算样式：`display:inline`，rect `17×15px`，`color rgb(32,103,152)`，`font-size 13px`，`cursor pointer`，`text-decoration none`。
-- 图标 span：rect `13×13px`，字体 `jisilu-iconfont`，文本为空（图标字形）。
+- 图标 span：rect `13×13px`，字体 `jisilu-iconfont`，字符为 `U+E61E`。
 
 操作格样式：宽 `32px`（表头 `<colgroup><col width="32">` 同步锁定），`padding 0 1px`，`position sticky`，`vertical-align middle`，`white-space normal`，`overflow visible`。内容盒宽 30px；原锚点占 1–18px，插件按钮放 18px 起可并列（详见 §5）。
 
-## 4. 与「红色 -」相关的澄清
+## 4. 红色 `-` 的补充实测
 
-- 未登录新会话下站内自选为空，全表都是 `+`，**页面上采不到站内红 `-` 的色值**。
+- 未登录新会话下站内自选为空，全表都是 `+`，当时页面上采不到站内红 `-` 的色值。
 - 首次调研发现的 6 个「-」元素是行情列的占位符 `span.color-darkgray.font-style-italic`（`rgb(169,169,169)`），与自选无关。
-- 因此本地 `-` 与已选名称红采用自定义常量 `#e74c3c`（ui-spec 只约束「同一红色」，未定值）；橙色 `+` 按 ui-spec 用 `#e67e22`。
+- 2026-08-24 通过 browser-skill 在散帅真实 Chrome 登录态页面只读核对 311 行操作列，确认原站 `+` 为 `U+E61E`、深蓝色 `rgb(32, 103, 152)`，原站 `-` 为 `U+E61D`、红色 `rgb(221, 24, 23)`（`#dd1817`）；两者均使用 `jisilu-iconfont`，图标 rect 均为 `13×13px`。
+- 本地按钮据此复用原站图标字体和字形；本地 `+` 只改为橙色 `#e67e22`，本地 `-` 与已选名称直接使用原站红色 `#dd1817`。
 
 ## 5. 插件按钮注入方案（依据实测几何）
 
-- 挂载点：操作格 `td[1]` 内追加 `<a class="jd-local-btn" role="button">`，文本 `+`／`-`（普通文本，不用 `jisilu-icons`）。
-- 定位：操作格本身 `position:sticky`（已定位），子元素用 `position:absolute; left:18px; top:50%; translateY(-50%); width:13px; height:13px; font-size:13px; text-align:center`。绝对定位不参与表格布局，保证「不扩展 32px 列宽、不覆盖原按钮」。
+- 挂载点：操作格 `td[1]` 内追加独立的 `<a class="jd-local-btn" role="button"><span class="jisilu-icons">…</span></a>`；仅复用原站图标字体和字形，不复用原站按钮元素或事件。
+- 定位：操作格本身 `position:sticky`（已定位），本地锚点用 `position:absolute; left:18px; top:50%; translateY(-50%); width:13px; height:13px`，图标 span 使用原站 `13×13px` 字形并移除会撑出剩余空间的外边距。绝对定位不参与表格布局，保证「不扩展 32px 列宽、不覆盖原按钮」。
 - 名称标红：设 `td[3] > span` 的内联 `color`，恢复时 `removeProperty('color')` 回落到页面原样式（名称 span 原本无内联色，实测安全）。
 
 ## 6. 页面自有状态（只观察不使用）
@@ -66,4 +67,4 @@
 - 代码格 `href` 前缀不再是 `/data/convert_bond_detail/`；
 - 操作列 `<col width="32">` 宽度约定变化。
 
-复核方法：未登录会话打开目标 URL，按本文 §2–§3 逐项比对（可复用 `/tmp` 下 Playwright 脚本思路：等待 `table.jsl-table-body tbody` 出现后提取）。
+复核方法：使用 browser-skill 连接真实 Chrome，先完成轻量页 snapshot，再打开目标 URL；等待 `table.jsl-table-body tbody` 渲染后，通过受控 `bsk evaluate` 提取操作列结构与计算样式，结束后立即停止 session。

@@ -27,16 +27,15 @@
 ├── test/
 │   └── watchlist-store.test.js  # 存储层单元测试（node:test，零依赖）
 └── tools/
-    └── e2e-cb-list.js           # 真实页面 E2E 验收（需 playwright 环境）
+    └── e2e-cb-list.js           # browser-skill 驱动真实 Chrome 的 E2E 验收
 ```
 
 ## 开发与验证
 
 - 单元测试：`node --test`（仓库根目录执行）。
-- E2E 验收：在有 playwright 的目录运行，例如
-  `cd <playwright-skill 目录> && node run.js /Users/mac/workspace/jisilu-deck/tools/e2e-cb-list.js`
-  （路径可用环境变量 `JD_EXT_PATH` 覆盖；脚本会读写 `/tmp/jd-e2e-profile` 用户数据目录。）
-- 手工验收：Chrome 打开 `chrome://extensions` → 开发者模式 → 加载已解压的扩展程序 → 选择本仓库目录 → 打开 `https://www.jisilu.cn/web/data/cb/list`。
+- E2E 验收：确认 browser-skill 扩展已连接真实 Chrome；源码改动后先在 `chrome://extensions` 重新加载本项目扩展，再在仓库根目录运行 `node tools/e2e-cb-list.js`。
+- 脚本通过 `bsk` 驱动隔离 Agent Window，验证真实登录态页面，并在结束前恢复它新增的本地自选测试数据；不会自动重新加载未打包扩展。
+- 手工验收：Chrome 进程重启后的持久化仍需手工验证；其余页面刷新、表格重渲染和 Agent Window 重建场景由脚本覆盖。
 
 ## 文档入口
 

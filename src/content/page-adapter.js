@@ -7,7 +7,9 @@
   const NS = (globalThis.jisiluDeck = globalThis.jisiluDeck || {});
 
   const PLUS_COLOR = '#e67e22'; // 本地 +（ui-spec.md §2）
-  const RED_COLOR = '#e74c3c';  // 本地 - 与已选名称共用同一红色（ui-spec.md §2/§3；站内红 - 色值未登录采不到，自定义常量）
+  const RED_COLOR = '#dd1817';  // 复用原站 - 的红色；已选名称与本地 - 同色（ui-spec.md §2/§3）
+  const PLUS_ICON = '\ue61e';   // 原站 jisilu-iconfont 的 +
+  const MINUS_ICON = '\ue61d';  // 原站 jisilu-iconfont 的 -
   const BTN_CLASS = 'jd-local-btn';
   const HINT_CLASS = 'jd-local-hint';
 
@@ -71,20 +73,29 @@
         btn.style.cssText = 'position:absolute;left:18px;top:50%;transform:translateY(-50%);width:13px;height:13px;line-height:13px;font-size:13px;text-align:center;text-decoration:none;cursor:pointer;display:block;user-select:none;';
         info.opCell.appendChild(btn);
       }
-      return { code: info.code, name: info.name, btn: btn, nameSpan: info.nameSpan };
+      let icon = btn.querySelector(':scope > span.jisilu-icons');
+      if (!icon) {
+        btn.textContent = '';
+        icon = document.createElement('span');
+        icon.className = 'jisilu-icons';
+        // 原站图标类自带左右 2px margin；操作格剩余宽度只有 13px，本地副本移除 margin 以免溢出
+        icon.style.cssText = 'margin:0;width:13px;height:13px;line-height:13px;font-size:13px;vertical-align:top;';
+        btn.appendChild(icon);
+      }
+      return { code: info.code, name: info.name, btn: btn, icon: icon, nameSpan: info.nameSpan };
     },
 
     // 按本地选中状态切换按钮与名称样式
     applyState(hook, watched) {
       const btn = hook.btn;
       if (watched) {
-        setText(btn, '-');
+        setText(hook.icon, MINUS_ICON);
         setStyle(btn, 'color', RED_COLOR);
         setAttr(btn, 'title', '从本地自选移出[' + hook.name + ']');
         setAttr(btn, 'aria-label', '移出本地自选');
         setStyle(hook.nameSpan, 'color', RED_COLOR);
       } else {
-        setText(btn, '+');
+        setText(hook.icon, PLUS_ICON);
         setStyle(btn, 'color', PLUS_COLOR);
         setAttr(btn, 'title', '加[' + hook.name + ']为本地自选转债');
         setAttr(btn, 'aria-label', '加入本地自选');

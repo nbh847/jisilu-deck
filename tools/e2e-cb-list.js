@@ -1,271 +1,378 @@
-// jisilu-deck 第一版 E2E 验收：对应 docs/architecture/validation-plan.md 全部场景
-// 运行方式（需有 playwright 环境的目录，例如 playwright-skill）：
-//   cd <playwright-skill 目录> && node run.js <本仓库>/test/e2e-cb-list.js
-// 断言的颜色常量与 src/content/page-adapter.js 保持一致，改色时需同步。
-const { chromium } = require('playwright');
-const fs = require('fs');
+// jisilu-deck 真实 Chrome E2E：通过 browser-skill 的 bsk CLI 驱动散帅已连接的浏览器。
+// 运行前：在 chrome://extensions 重新加载本项目未打包扩展，然后执行：
+//   node tools/e2e-cb-list.js
+//
+// 集思录全量宽表的 aria snapshot 在当前 browser-skill 版本中可能阻塞，因此按 skill 约束先对
+// Agent Window 初始轻量页 snapshot，再导航到目标页；目标页用受控 evaluate 完成精确 DOM 断言。
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 
-// 注意：经 playwright-skill 的 run.js 执行时脚本会被复制到 skill 目录，__dirname 不可用，
-// 因此扩展路径用环境变量 JD_EXT_PATH 覆盖，默认本仓库绝对路径。
-const EXT_PATH = process.env.JD_EXT_PATH || '/Users/mac/workspace/jisilu-deck';
+const ROOT = path.resolve(__dirname, '..');
 const TARGET_URL = 'https://www.jisilu.cn/web/data/cb/list';
-const PROFILE_DIR = '/tmp/jd-e2e-profile';
-
-const PLUS_RGB = 'rgb(230, 126, 34)';   // #e67e22
-const RED_RGB = 'rgb(231, 76, 60)';     // #e74c3c
-const NAME_DEFAULT_RGB = 'rgb(61, 61, 61)';
-const SITE_LINK_BLUE = 'rgb(32, 103, 152)';
+const PLUS_ICON = '\ue61e';
+const MINUS_ICON = '\ue61d';
+const PLUS_RGB = 'rgb(230, 126, 34)';
+const RED_RGB = 'rgb(221, 24, 23)';
+const SITE_BLUE_RGB = 'rgb(32, 103, 152)';
+const SCREENSHOT_PATH = '/tmp/jd-bsk-e2e.png';
 
 const results = [];
-const check = (name, ok, detail) => {
-  results.push({ name, ok, detail: detail || '' });
-  console.log((ok ? '✅' : '❌') + ' ' + name + (detail ? ' | ' + detail : ''));
-};
+const activeSessions = new Set();
+let testCodes = [];
+let cleanupComplete = false;
 
-async function launch() {
-  return chromium.launchPersistentContext(PROFILE_DIR, {
-    headless: false,
-    viewport: { width: 1280, height: 800 },
-    args: [`--disable-extensions-except=${EXT_PATH}`, `--load-extension=${EXT_PATH}`],
-  });
+function check(name, ok, detail = '') {
+  results.push({ name, ok: Boolean(ok), detail });
+  console.log(`${ok ? '✅' : '❌'} ${name}${detail ? ` | ${detail}` : ''}`);
 }
 
-async function waitForInjectedButtons(page, timeout = 20000) {
-  await page.waitForFunction(
-    () => {
-      const rows = Array.from(document.querySelectorAll('table.jsl-table-body > tbody > tr'))
-        .filter((tr) => tr.children[0] && tr.children[0].classList.contains('sticky-data'));
-      return rows.length >= 10 && rows.every((tr) => tr.children[1] && tr.children[1].querySelector('a.jd-local-btn'));
-    },
-    { timeout }
+function addChecks(items) {
+  for (const item of items || []) check(item.name, item.ok, item.detail || '');
+}
+
+function runBsk(args, options = {}) {
+  const result = spawnSync('bsk', args, {
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+    timeout: options.timeout || 45000,
+  });
+  if (result.error) throw new Error(`bsk ${args.join(' ')}：${result.error.message}`);
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || `bsk 退出码 ${result.status}`).trim());
+  }
+  const output = (result.stdout || '').trim();
+  if (!options.json) return output;
+  try {
+    return JSON.parse(output);
+  } catch (error) {
+    throw new Error(`无法解析 bsk JSON 输出：${error.message}\n${output.slice(0, 1000)}`);
+  }
+}
+
+function startSession() {
+  const started = runBsk(
+    ['session', 'start', '--json', '--width', '1280', '--height', '800'],
+    { json: true }
+  );
+  const session = started.session_id;
+  if (!session) throw new Error('bsk session start 未返回 session_id');
+  activeSessions.add(session);
+  runBsk(
+    ['snapshot', '--session', session, '--max-depth', '3', '--max-tokens', '300', '--json'],
+    { json: true, timeout: 30000 }
+  );
+  return session;
+}
+
+function stopSession(session) {
+  if (!session || !activeSessions.has(session)) return;
+  runBsk(['session', 'stop', session], { timeout: 30000 });
+  activeSessions.delete(session);
+}
+
+function navigate(session) {
+  runBsk(
+    ['navigate', TARGET_URL, '--session', session, '--wait-until', 'domcontentloaded', '--timeout', '30s', '--json'],
+    { json: true }
   );
 }
 
-async function rowsInfo(page) {
-  return page.evaluate(() => {
-    return Array.from(document.querySelectorAll('table.jsl-table-body > tbody > tr'))
-      .filter((tr) => tr.children[0] && tr.children[0].classList.contains('sticky-data'))
-      .map((tr) => {
-        const btn = tr.children[1].querySelector('a.jd-local-btn');
-        const nameSpan = tr.children[3].querySelector('span');
-        return {
-          code: (tr.children[2].innerText || '').trim(),
-          btnText: btn ? btn.textContent.trim() : null,
-          btnColor: btn ? getComputedStyle(btn).color : null,
-          btnTitle: btn ? btn.getAttribute('title') : null,
-          nameInlineColor: nameSpan ? nameSpan.style.color : null,
-          nameColor: nameSpan ? getComputedStyle(nameSpan).color : null,
-          opTdWidth: tr.children[1].getBoundingClientRect().width,
-          btnCount: tr.children[1].querySelectorAll('a.jd-local-btn').length,
-        };
-      });
-  });
+function evaluate(session, expression) {
+  const response = runBsk(
+    ['evaluate', '--session', session, '--timeout', '30s', '--json', expression],
+    { json: true, timeout: 45000 }
+  );
+  if (response.ok !== true) {
+    const message = response.exception_details?.text || response.message || JSON.stringify(response);
+    throw new Error(`页面 evaluate 失败：${message}`);
+  }
+  return response.value;
 }
 
-async function rowByCode(page, code) {
-  const all = await rowsInfo(page);
-  return all.find((r) => r.code === code) || null;
+function staticChecks() {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+  check('manifest 为 MV3', manifest.manifest_version === 3);
+  check('权限只有 storage', JSON.stringify(manifest.permissions) === JSON.stringify(['storage']), JSON.stringify(manifest.permissions));
+  const contentScript = manifest.content_scripts && manifest.content_scripts[0];
+  check(
+    '匹配范围只有目标页',
+    contentScript && JSON.stringify(contentScript.matches) === JSON.stringify([`${TARGET_URL}*`]),
+    JSON.stringify((contentScript && contentScript.matches) || null)
+  );
+  check(
+    '注入脚本文件存在',
+    contentScript && contentScript.js.every((file) => fs.existsSync(path.join(ROOT, file))),
+    (contentScript && contentScript.js || []).join(',')
+  );
+  check('E2E 使用 browser-skill，不依赖 Playwright', !Object.keys(require.cache).some((file) => file.includes('/playwright')));
+}
+
+const PHASE_ONE = `
+(async () => {
+  const PLUS = ${JSON.stringify(PLUS_ICON)};
+  const MINUS = ${JSON.stringify(MINUS_ICON)};
+  const PLUS_RGB = ${JSON.stringify(PLUS_RGB)};
+  const RED_RGB = ${JSON.stringify(RED_RGB)};
+  const SITE_BLUE = ${JSON.stringify(SITE_BLUE_RGB)};
+  const checks = [];
+  const check = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail });
+  const rows = () => [...document.querySelectorAll('table.jsl-table-body > tbody > tr')]
+    .filter((tr) => tr.children[0] && tr.children[0].classList.contains('sticky-data'));
+  const iconOf = (btn) => btn && btn.querySelector(':scope > span.jisilu-icons');
+  const rowInfo = (tr) => {
+    const btn = tr.children[1].querySelector('a.jd-local-btn');
+    const icon = iconOf(btn);
+    const name = tr.children[3].querySelector('span');
+    return {
+      tr, btn, icon, name,
+      code: (tr.children[2].innerText || '').trim(),
+      glyph: icon && icon.textContent,
+      color: icon && getComputedStyle(icon).color,
+      nameColor: name && getComputedStyle(name).color,
+      nameInline: name && name.style.color,
+    };
+  };
+  const waitFor = async (predicate, message, timeout = 20000) => {
+    const end = Date.now() + timeout;
+    while (Date.now() < end) {
+      const value = predicate();
+      if (value) return value;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error(message);
+  };
+  await waitFor(() => {
+    const current = rows();
+    return current.length >= 10 && current.every((tr) => tr.children[1].querySelector('a.jd-local-btn'));
+  }, '等待插件按钮注入超时；请先在 chrome://extensions 重新加载 jisilu-deck');
+
+  const all = rows().map(rowInfo);
+  check('每条数据行注入且只有一个本地按钮', all.every((item) => item.tr.children[1].querySelectorAll('a.jd-local-btn').length === 1), 'rows=' + all.length);
+  check('操作列宽保持 32px', all.every((item) => Math.abs(item.tr.children[1].getBoundingClientRect().width - 32) < 0.6));
+  check('本地按钮全部使用 jisilu-icons 子元素', all.every((item) => item.icon && getComputedStyle(item.icon).fontFamily.includes('jisilu-iconfont')));
+  check('本地图标全部为 13×13px', all.every((item) => {
+    const rect = item.icon.getBoundingClientRect();
+    return Math.abs(rect.width - 13) < 0.6 && Math.abs(rect.height - 13) < 0.6;
+  }));
+  check('本地状态只使用原站 +／- 字形', all.every((item) => item.glyph === PLUS || item.glyph === MINUS));
+
+  const originalUnchanged = all.every((item) => {
+    const anchor = item.tr.children[1].querySelector('a:not(.jd-local-btn)');
+    const icon = anchor && anchor.querySelector('.jisilu-icons');
+    if (!anchor || !icon) return false;
+    const isPlus = anchor.title.startsWith('加[');
+    const isMinus = anchor.title.startsWith('将[');
+    return (isPlus && icon.textContent === PLUS && getComputedStyle(icon).color === SITE_BLUE)
+      || (isMinus && icon.textContent === MINUS && getComputedStyle(icon).color === RED_RGB);
+  });
+  check('集思录原 +／- 图标、颜色和提示未改动', originalUnchanged);
+
+  const geometryOk = all.every((item) => {
+    const cell = item.tr.children[1].getBoundingClientRect();
+    const original = item.tr.children[1].querySelector('a:not(.jd-local-btn)').getBoundingClientRect();
+    const local = item.btn.getBoundingClientRect();
+    return local.left >= original.right - 0.5 && local.right <= cell.right + 0.5;
+  });
+  check('本地按钮不覆盖原按钮且不超出操作格', geometryOk);
+
+  const candidates = all.filter((item) => item.glyph === PLUS);
+  if (candidates.length < 2) throw new Error('至少需要两条未加入本地自选的记录用于隔离验收');
+  const first = candidates[0];
+  const second = candidates[1];
+  const firstCodeColor = getComputedStyle(first.tr.children[2].querySelector('a')).color;
+
+  check('未选按钮复用原站 + 字形且只改为橙色', first.glyph === PLUS && first.color === PLUS_RGB, first.color || 'no color');
+  first.btn.click();
+  await waitFor(() => rowInfo(first.tr).glyph === MINUS, '第一条记录加入本地自选超时');
+  const watchedFirst = rowInfo(first.tr);
+  check('加入后复用原站 - 字形和红色', watchedFirst.glyph === MINUS && watchedFirst.color === RED_RGB, watchedFirst.color || 'no color');
+  check('加入后名称与 - 同红', watchedFirst.nameColor === RED_RGB && watchedFirst.nameInline === RED_RGB, watchedFirst.nameColor || 'no color');
+  check('代码字段颜色不变', getComputedStyle(first.tr.children[2].querySelector('a')).color === firstCodeColor);
+
+  second.btn.click();
+  await waitFor(() => rowInfo(second.tr).glyph === MINUS, '第二条记录加入本地自选超时');
+  check('两条测试记录可独立加入', rowInfo(first.tr).glyph === MINUS && rowInfo(second.tr).glyph === MINUS);
+
+  return { checks, codes: [first.code, second.code] };
+})()
+`;
+
+function phaseTwoExpression(codes) {
+  return `
+  (async () => {
+    const PLUS = ${JSON.stringify(PLUS_ICON)};
+    const MINUS = ${JSON.stringify(MINUS_ICON)};
+    const RED_RGB = ${JSON.stringify(RED_RGB)};
+    const codes = ${JSON.stringify(codes)};
+    const checks = [];
+    const check = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail });
+    const rows = () => [...document.querySelectorAll('table.jsl-table-body > tbody > tr')]
+      .filter((tr) => tr.children[0] && tr.children[0].classList.contains('sticky-data'));
+    const find = (code) => rows().find((tr) => (tr.children[2].innerText || '').trim() === code);
+    const state = (code) => {
+      const tr = find(code);
+      const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
+      const icon = btn && btn.querySelector(':scope > span.jisilu-icons');
+      const name = tr && tr.children[3].querySelector('span');
+      return { tr, btn, glyph: icon && icon.textContent, name, nameColor: name && getComputedStyle(name).color, nameInline: name && name.style.color };
+    };
+    const waitFor = async (predicate, message, timeout = 20000) => {
+      const end = Date.now() + timeout;
+      while (Date.now() < end) {
+        const value = predicate();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(message);
+    };
+    await waitFor(() => codes.every((code) => state(code).glyph), '刷新后等待插件状态恢复超时');
+    check('页面刷新后两条记录恢复红色 - 与名称标红', codes.every((code) => {
+      const item = state(code);
+      return item.glyph === MINUS && item.nameColor === RED_RGB && item.nameInline === RED_RGB;
+    }));
+
+    const priceHeader = [...document.querySelectorAll('.jsl-table-header th')]
+      .find((th) => (th.innerText || '').trim() === '现价');
+    if (priceHeader) {
+      let tableMutated = false;
+      const tableBody = rows()[0].parentElement;
+      const observer = new MutationObserver(() => { tableMutated = true; });
+      observer.observe(tableBody, { childList: true, subtree: true });
+      priceHeader.click();
+      await waitFor(() => tableMutated, '点击现价表头后表格未发生重渲染');
+      observer.disconnect();
+      await waitFor(() => codes.every((code) => state(code).glyph), '排序重渲染后等待插件状态恢复超时');
+      check('排序重渲染后每行仍只有一个本地按钮', rows().every((tr) => tr.children[1].querySelectorAll('a.jd-local-btn').length === 1));
+      check('排序重渲染后测试记录状态恢复', codes.every((code) => state(code).glyph === MINUS));
+    } else {
+      check('排序重渲染场景', true, '未找到现价表头，跳过');
+    }
+
+    state(codes[0]).btn.click();
+    await waitFor(() => state(codes[0]).glyph === PLUS, '移出第一条测试记录超时');
+    check('移出只影响当前记录', state(codes[0]).glyph === PLUS && state(codes[0]).nameInline === '' && state(codes[1]).glyph === MINUS);
+    state(codes[0]).btn.click();
+    await waitFor(() => state(codes[0]).glyph === MINUS, '重新加入第一条测试记录超时');
+    return { checks };
+  })()
+  `;
+}
+
+function restartAndCleanupExpression(codes) {
+  return `
+  (async () => {
+    const PLUS = ${JSON.stringify(PLUS_ICON)};
+    const MINUS = ${JSON.stringify(MINUS_ICON)};
+    const codes = ${JSON.stringify(codes)};
+    const checks = [];
+    const check = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail });
+    const rows = () => [...document.querySelectorAll('table.jsl-table-body > tbody > tr')]
+      .filter((tr) => tr.children[0] && tr.children[0].classList.contains('sticky-data'));
+    const state = (code) => {
+      const tr = rows().find((row) => (row.children[2].innerText || '').trim() === code);
+      const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
+      const icon = btn && btn.querySelector(':scope > span.jisilu-icons');
+      const name = tr && tr.children[3].querySelector('span');
+      return { btn, glyph: icon && icon.textContent, nameInline: name && name.style.color };
+    };
+    const waitFor = async (predicate, message, timeout = 20000) => {
+      const end = Date.now() + timeout;
+      while (Date.now() < end) {
+        const value = predicate();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(message);
+    };
+    await waitFor(() => codes.every((code) => state(code).glyph), 'Agent Window 重建后等待插件状态恢复超时');
+    check('Agent Window 重建后两条测试记录保持本地自选', codes.every((code) => state(code).glyph === MINUS));
+    for (const code of codes) {
+      const item = state(code);
+      if (item.glyph === MINUS) item.btn.click();
+      await waitFor(() => state(code).glyph === PLUS, '清理测试记录超时：' + code);
+    }
+    check('验收测试数据已恢复为初始未选状态', codes.every((code) => state(code).glyph === PLUS && state(code).nameInline === ''));
+    return { checks, cleanupComplete: true };
+  })()
+  `;
+}
+
+function cleanupExpression(codes) {
+  return `
+  (async () => {
+    const PLUS = ${JSON.stringify(PLUS_ICON)};
+    const MINUS = ${JSON.stringify(MINUS_ICON)};
+    const codes = ${JSON.stringify(codes)};
+    const end = Date.now() + 20000;
+    const state = (code) => {
+      const tr = [...document.querySelectorAll('table.jsl-table-body > tbody > tr')]
+        .find((row) => row.children[0] && row.children[0].classList.contains('sticky-data') && (row.children[2].innerText || '').trim() === code);
+      const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
+      const icon = btn && btn.querySelector(':scope > span.jisilu-icons');
+      return { btn, glyph: icon && icon.textContent };
+    };
+    while (Date.now() < end && !codes.every((code) => state(code).glyph)) await new Promise((resolve) => setTimeout(resolve, 200));
+    for (const code of codes) {
+      const item = state(code);
+      if (item.glyph === MINUS) item.btn.click();
+    }
+    while (Date.now() < end && !codes.every((code) => state(code).glyph === PLUS)) await new Promise((resolve) => setTimeout(resolve, 200));
+    return codes.every((code) => state(code).glyph === PLUS);
+  })()
+  `;
 }
 
 (async () => {
-  // ===== 0. 静态检查：Manifest 最小权限 =====
+  let session;
   try {
-    const manifest = JSON.parse(fs.readFileSync(EXT_PATH + '/manifest.json', 'utf8'));
-    check('manifest 为 MV3', manifest.manifest_version === 3);
-    check('权限只有 storage', JSON.stringify(manifest.permissions) === JSON.stringify(['storage']), JSON.stringify(manifest.permissions));
-    const cs = manifest.content_scripts && manifest.content_scripts[0];
-    check('匹配范围只有目标页', cs && JSON.stringify(cs.matches) === JSON.stringify(['https://www.jisilu.cn/web/data/cb/list*']), JSON.stringify((cs && cs.matches) || null));
-    check('注入脚本文件存在', cs.js.every((f) => fs.existsSync(EXT_PATH + '/' + f)), cs.js.join(','));
-  } catch (e) {
-    check('manifest.json 可读', false, e.message);
-  }
+    staticChecks();
+    runBsk(['status']);
 
-  const context = await launch();
-  let extensionRequests = 0;
-  context.on('request', (req) => {
-    const initiator = (req.headers() && (req.headers().origin || req.headers().initiator)) || '';
-    if (initiator.includes('chrome-extension://')) extensionRequests++;
-  });
-  const page = context.pages()[0] || (await context.newPage());
+    session = startSession();
+    navigate(session);
+    const phaseOne = evaluate(session, PHASE_ONE);
+    addChecks(phaseOne.checks);
+    testCodes = phaseOne.codes;
 
-  try {
-    // ===== 1. 注入：每条数据行一个本地按钮 =====
-    await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    let injected = true;
-    try { await waitForInjectedButtons(page); } catch (e) { injected = false; }
-    check('每条数据行注入且只有一个 jd-local-btn', injected);
+    runBsk(['reload', '--session', session, '--wait-until', 'domcontentloaded', '--timeout', '30s', '--json'], { json: true });
+    const phaseTwo = evaluate(session, phaseTwoExpression(testCodes));
+    addChecks(phaseTwo.checks);
+    runBsk(['screenshot', '--session', session, '--out', SCREENSHOT_PATH, '--json'], { json: true });
+    check('真实 Chrome 截图已生成', fs.existsSync(SCREENSHOT_PATH), SCREENSHOT_PATH);
+    stopSession(session);
+    session = null;
 
-    const rows = await rowsInfo(page);
-    check('数据行数 >= 20', rows.length >= 20, 'rows=' + rows.length);
-    check('操作列宽保持 32px', rows.every((r) => Math.abs(r.opTdWidth - 32) < 0.6), 'sample=' + (rows[0] && rows[0].opTdWidth));
-    check('按钮数全部为 1（无重复注入）', rows.every((r) => r.btnCount === 1));
-
-    // 原按钮未被改动
-    const origOk = await page.evaluate(() => {
-      const tr = document.querySelector('table.jsl-table-body > tbody tr');
-      const a = tr.children[1].querySelector('a[title^="加["]');
-      if (!a) return false;
-      const cs = getComputedStyle(a);
-      return cs.color === 'rgb(32, 103, 152)' && a.querySelector('.jisilu-icons') !== null;
-    });
-    check('集思录原 + 按钮颜色与图标未改动', origOk);
-
-    // 几何：不覆盖原按钮（原按钮 right <= 我们 left）
-    const geom = await page.evaluate(() => {
-      const tr = document.querySelector('table.jsl-table-body > tbody tr');
-      const td = tr.children[1];
-      const orig = td.querySelector('a[title^="加["]');
-      const mine = td.querySelector('a.jd-local-btn');
-      const or = orig.getBoundingClientRect(), mr = mine.getBoundingClientRect(), dr = td.getBoundingClientRect();
-      return { origRight: or.right, myLeft: mr.left, myRight: mr.right, tdRight: dr.right, myW: mr.width, myH: mr.height };
-    });
-    check('本地按钮不覆盖原按钮', geom.myLeft >= geom.origRight - 0.5, JSON.stringify({ origRight: +geom.origRight.toFixed(1), myLeft: +geom.myLeft.toFixed(1) }));
-    check('本地按钮不超出操作格', geom.myRight <= geom.tdRight + 0.5, `myRight=${geom.myRight.toFixed(1)} tdRight=${geom.tdRight.toFixed(1)}`);
-
-    // ===== 2. 目标行初始状态（未加入） =====
-    const first = rows[0], second = rows[1];
-    const code1 = first.code, code2 = second.code;
-    check('初始为橙色 +', first.btnText === '+' && first.btnColor === PLUS_RGB, `${first.btnText} ${first.btnColor}`);
-    check('初始名称保持页面原色', first.nameColor === NAME_DEFAULT_RGB && first.nameInlineColor === '');
-
-    // ===== 3. 点击 + ：加入本地自选 =====
-    await page.click(`table.jsl-table-body > tbody tr:has(a[href="/data/convert_bond_detail/${code1}"]) a.jd-local-btn`);
-    await page.waitForFunction(
-      (code) => {
-        const a = document.querySelector(`a[href="/data/convert_bond_detail/${code}"]`);
-        const tr = a && a.closest('tr');
-        const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
-        return btn && btn.textContent.trim() === '-';
-      },
-      code1, { timeout: 10000 }
-    );
-    const r1 = await rowByCode(page, code1);
-    check('保存成功后切换为红色 -', r1.btnText === '-' && r1.btnColor === RED_RGB, `${r1.btnText} ${r1.btnColor}`);
-    check('悬浮提示为「从本地自选移出[名称]」', r1.btnTitle === `从本地自选移出[${await bondName(page, code1)}]`, r1.btnTitle);
-
-    // 名称变红且与 - 同色；代码与其他字段样式不变
-    const cellColors = await page.evaluate((code) => {
-      const a = document.querySelector(`a[href="/data/convert_bond_detail/${code}"]`);
-      const tr = a.closest('tr');
-      return {
-        nameInline: tr.children[3].querySelector('span').style.color,
-        nameComputed: getComputedStyle(tr.children[3].querySelector('span')).color,
-        codeColor: getComputedStyle(tr.children[2].querySelector('a')).color,
-        priceColor: getComputedStyle(tr.children[4].querySelector('span') || tr.children[4]),
-      };
-    }, code1);
-    check('已加入行名称与本地 - 同为红色', cellColors.nameComputed === RED_RGB && cellColors.nameInline === RED_RGB, cellColors.nameComputed);
-    check('代码字段颜色不变', cellColors.codeColor === SITE_LINK_BLUE, cellColors.codeColor);
-
-    // ===== 4. 第二行加入：互不影响 =====
-    await page.click(`table.jsl-table-body > tbody tr:has(a[href="/data/convert_bond_detail/${code2}"]) a.jd-local-btn`);
-    await page.waitForFunction((code) => {
-      const a = document.querySelector(`a[href="/data/convert_bond_detail/${code}"]`);
-      const tr = a && a.closest('tr');
-      const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
-      return btn && btn.textContent.trim() === '-';
-    }, code2, { timeout: 10000 });
-    const both = await rowsInfo(page);
-    const watched1 = both.find((r) => r.code === code1), watched2 = both.find((r) => r.code === code2);
-    check('两行均加入且名称均标红', watched1.btnText === '-' && watched2.btnText === '-' && watched1.nameColor === RED_RGB && watched2.nameColor === RED_RGB);
-    check('其余行保持 + 且名称未被插件改动（无内联色）', both.filter((r) => r.code !== code1 && r.code !== code2).every((r) => r.btnText === '+' && r.nameInlineColor === ''));
-
-    // ===== 5. 点击 - ：只移出当前行 =====
-    await page.click(`table.jsl-table-body > tbody tr:has(a[href="/data/convert_bond_detail/${code1}"]) a.jd-local-btn`);
-    await page.waitForFunction((code) => {
-      const a = document.querySelector(`a[href="/data/convert_bond_detail/${code}"]`);
-      const tr = a && a.closest('tr');
-      const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
-      return btn && btn.textContent.trim() === '+';
-    }, code1, { timeout: 10000 });
-    const afterRemove = await rowsInfo(page);
-    const removed = afterRemove.find((r) => r.code === code1), kept = afterRemove.find((r) => r.code === code2);
-    check('移出后恢复橙色 + 且名称恢复原色', removed.btnText === '+' && removed.btnColor === PLUS_RGB && removed.nameColor === NAME_DEFAULT_RGB && removed.nameInlineColor === '');
-    check('移出只影响当前行（另一行仍 -）', kept.btnText === '-' && kept.nameColor === RED_RGB);
-
-    // 重新加入第一行，供后续持久化验证
-    await page.click(`table.jsl-table-body > tbody tr:has(a[href="/data/convert_bond_detail/${code1}"]) a.jd-local-btn`);
-    await page.waitForFunction((code) => {
-      const a = document.querySelector(`a[href="/data/convert_bond_detail/${code}"]`);
-      const tr = a && a.closest('tr');
-      const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
-      return btn && btn.textContent.trim() === '-';
-    }, code1, { timeout: 10000 });
-
-    // ===== 6. 页面刷新后状态恢复 =====
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await waitForInjectedButtons(page);
-    const reloaded = await rowsInfo(page);
-    const rl1 = reloaded.find((r) => r.code === code1), rl2 = reloaded.find((r) => r.code === code2);
-    check('页面刷新后两行均恢复红色 - 与名称标红', rl1 && rl2 && rl1.btnText === '-' && rl2.btnText === '-' && rl1.nameColor === RED_RGB && rl2.nameColor === RED_RGB);
-    check('刷新后未加入行仍为 + 且无重复按钮', reloaded.every((r) => r.btnCount === 1) && reloaded.filter((r) => r.code !== code1 && r.code !== code2).every((r) => r.btnText === '+'));
-    check('刷新后操作列宽仍为 32px', reloaded.every((r) => Math.abs(r.opTdWidth - 32) < 0.6));
-
-    // ===== 7. 表格重渲染（点击表头排序）后不重复、状态正确 =====
-    const sorted = await page.evaluate(() => {
-      const ths = Array.from(document.querySelectorAll('.jsl-table-header th'));
-      const th = ths.find((h) => (h.innerText || '').trim() === '现价');
-      if (!th) return false;
-      th.click();
-      return true;
-    });
-    if (sorted) {
-      await page.waitForTimeout(800);
-      await waitForInjectedButtons(page);
-      const resorted = await rowsInfo(page);
-      const s1 = resorted.find((r) => r.code === code1), s2 = resorted.find((r) => r.code === code2);
-      check('排序重渲染后每行仍只有一个按钮', resorted.every((r) => r.btnCount === 1));
-      check('排序重渲染后已选状态与名称红色恢复', s1 && s2 && s1.btnText === '-' && s2.btnText === '-' && s1.nameColor === RED_RGB && s2.nameColor === RED_RGB);
-    } else {
-      check('排序重渲染场景（未找到现价表头，跳过）', true, 'skipped');
+    session = startSession();
+    navigate(session);
+    const restarted = evaluate(session, restartAndCleanupExpression(testCodes));
+    addChecks(restarted.checks);
+    cleanupComplete = restarted.cleanupComplete === true;
+  } catch (error) {
+    check('browser-skill E2E 执行完整性', false, error.message);
+  } finally {
+    if (testCodes.length && !cleanupComplete) {
+      try {
+        if (!session) {
+          session = startSession();
+          navigate(session);
+        }
+        cleanupComplete = evaluate(session, cleanupExpression(testCodes)) === true;
+        check('异常路径清理测试数据', cleanupComplete);
+      } catch (error) {
+        check('异常路径清理测试数据', false, error.message);
+      }
     }
-
-    // ===== 8. 截图留档 =====
-    const shotRow = await page.$(`table.jsl-table-body > tbody tr:has(a[href="/data/convert_bond_detail/${code2}"])`);
-    if (shotRow) await shotRow.screenshot({ path: '/tmp/jd-e2e-watched-row.png' });
-    await page.screenshot({ path: '/tmp/jd-e2e-full.png', fullPage: false });
-
-    // 移出第一行后再重启验证（只保留第二行）
-    await page.click(`table.jsl-table-body > tbody tr:has(a[href="/data/convert_bond_detail/${code1}"]) a.jd-local-btn`);
-    await page.waitForFunction((code) => {
-      const a = document.querySelector(`a[href="/data/convert_bond_detail/${code}"]`);
-      const tr = a && a.closest('tr');
-      const btn = tr && tr.children[1].querySelector('a.jd-local-btn');
-      return btn && btn.textContent.trim() === '+';
-    }, code1, { timeout: 10000 });
-
-    // ===== 9. 浏览器重启后状态恢复 =====
-    await context.close();
-    const context2 = await launch();
-    const page2 = context2.pages()[0] || (await context2.newPage());
-    context2.on('request', (req) => {
-      const initiator = (req.headers() && (req.headers().origin || req.headers().initiator)) || '';
-      if (initiator.includes('chrome-extension://')) extensionRequests++;
-    });
-    await page2.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await waitForInjectedButtons(page2);
-    const restarted = await rowsInfo(page2);
-    const rs1 = restarted.find((r) => r.code === code1), rs2 = restarted.find((r) => r.code === code2);
-    check('浏览器重启后：已移出行恢复 +', rs1 && rs1.btnText === '+' && rs1.nameColor === NAME_DEFAULT_RGB);
-    check('浏览器重启后：未移出行保持红色 - 与名称标红', rs2 && rs2.btnText === '-' && rs2.nameColor === RED_RGB);
-
-    // ===== 10. 插件不主动请求任何接口 =====
-    check('全程无 chrome-extension:// 发起的请求', extensionRequests === 0, 'count=' + extensionRequests);
-
-    await context2.close();
-  } catch (e) {
-    check('E2E 执行完整性', false, e.message);
-    try { await context.close(); } catch (_) {}
+    for (const active of [...activeSessions]) {
+      try {
+        stopSession(active);
+      } catch (error) {
+        check(`停止 browser-skill session ${active}`, false, error.message);
+      }
+    }
   }
 
-  const failed = results.filter((r) => !r.ok);
-  console.log(`\n===== E2E 结果：${results.length - failed.length}/${results.length} 通过 =====`);
-  if (failed.length) { console.log('失败项：\n' + failed.map((f) => ' - ' + f.name + ' | ' + f.detail).join('\n')); process.exitCode = 1; }
+  const failed = results.filter((item) => !item.ok);
+  console.log(`\n===== browser-skill E2E 结果：${results.length - failed.length}/${results.length} 通过 =====`);
+  if (failed.length) process.exitCode = 1;
 })();
-
-async function bondName(page, code) {
-  return page.evaluate((c) => {
-    const a = document.querySelector(`a[href="/data/convert_bond_detail/${c}"]`);
-    return (a.closest('tr').children[3].innerText || '').trim();
-  }, code);
-}

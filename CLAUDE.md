@@ -1,20 +1,20 @@
 # jisilu-deck · Claude Code 项目规则
 
-本文件是 Claude Code 在 `jisilu-deck` 项目内的行为约束。全局规则在 `/Users/mac/.claude/CLAUDE.md`，workspace 规则在 `/Users/mac/workspace/CLAUDE.md`；本文件只补充项目特有约定。冲突时以本文件为准（红线与安全约束除外）。
+本文件是 Claude Code 在 `jisilu-deck` 项目内的行为约束。全局规则与 workspace 规则由本地 Agent 环境提供；本文件只补充项目特有约定。冲突时以本文件为准（红线与安全约束除外）。
 
 ## 项目身份
 
 - 名称：`jisilu-deck`
 - 定位：集思录页面增强 Chrome 插件——在可转债列表操作列增加本地自选按钮，突破站内自选数量对个人记录的限制
 - 散帅：bni
-- workspace 内路径：`/Users/mac/workspace/jisilu-deck`
+- workspace 内路径：当前仓库根目录
 - 同级相关项目：`kzz-radar`（可转债研究与决策辅助，两者定位不同，互不归属）；`WhiteHorseWeb`（投资管理系统）
 
 ## 启动读取顺序
 
 进入本项目时按顺序读：
 
-1. `/Users/mac/workspace/WORKSPACE.md`
+1. `../WORKSPACE.md`
 2. 本文件（`CLAUDE.md`）
 3. `AGENTS.md`（与 Codex 共用的通用规则源）
 4. `ROADMAP.md`
@@ -45,5 +45,5 @@
 
 ## 验证要求
 
-- 插件功能改动后，在 Chrome `chrome://extensions` 加载未打包扩展实测，不只跑单测。
+- 插件功能改动后，先在 Chrome `chrome://extensions` 重新加载未打包扩展，再用 browser-skill 连接真实 Chrome 实测，不只跑单测。
 - 每轮验证在 `ROADMAP.md` 记录验证方式与结果。
