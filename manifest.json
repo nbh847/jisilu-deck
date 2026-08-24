@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "jisilu-deck",
+  "version": "0.1.0",
+  "description": "在集思录可转债列表操作列增加本地自选按钮：橙色 + 加入、红色 - 移出，记录保存在浏览器本地。",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.jisilu.cn/web/data/cb/list*"],
+      "js": [
+        "src/content/watchlist-store.js",
+        "src/content/page-adapter.js",
+        "src/content/main.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

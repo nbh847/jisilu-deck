@@ -68,6 +68,6 @@
 
 ## 7. 当前阶段
 
-产品范围已经收敛为单一行内自选功能。当前按散帅要求停留在文档阶段，未获明确实施授权前不创建代码。
+第一版已按本定义实现（`manifest.json` + `src/content/`），并于 2026-08-24 通过真实页面自动化验收（29/29 项），等待散帅在自有 Chrome 中做最终手工验收。
 
 数据语义见 [`data-rules.md`](data-rules.md)，按钮交互见 [`ui-spec.md`](ui-spec.md)，实施边界见 [`../architecture/implementation-boundaries.md`](../architecture/implementation-boundaries.md)，验证要求见 [`../architecture/validation-plan.md`](../architecture/validation-plan.md)。

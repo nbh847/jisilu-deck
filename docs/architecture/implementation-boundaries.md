@@ -56,4 +56,4 @@
 
 ## 7. 当前阶段
 
-当前按散帅要求只写文档。进入实现必须取得新的明确授权。
+第一版已实现并通过真实页面自动化验收。模块对应关系：`src/content/watchlist-store.js` 承担第 4 节本地自选责任，`src/content/page-adapter.js` 承担第 3 节页面适配责任，`src/content/main.js` 负责连接与表格重渲染监听。
