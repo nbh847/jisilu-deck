@@ -48,3 +48,7 @@
 - [`docs/research/README.md`](docs/research/README.md)：实施前必须完成的调研清单与证据要求。
 - [`docs/research/2026-08-22-boundary-research.md`](docs/research/2026-08-22-boundary-research.md)：目标页面、服务协议与 Chrome 能力的首轮调研记录。
 - [`docs/research/2026-08-24-cb-list-dom-structure.md`](docs/research/2026-08-24-cb-list-dom-structure.md)：目标页 DOM 结构、选择器与失效条件（页面适配依据）。
+
+## License
+
+本项目采用 [MIT License](LICENSE)。
