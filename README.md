@@ -1,53 +1,76 @@
 # jisilu-deck
 
-集思录页面增强 Chrome 插件。在可转债列表现有操作列中增加一个本地自选按钮，把个人自选记录保存在浏览器本机，并用红色转债名称标识已加入状态。
+为集思录可转债列表增加浏览器本地自选功能的 Chrome 扩展。
 
-## 当前状态
+扩展会在页面原有操作按钮右侧增加一个本地按钮：橙色 `+` 用于加入本地自选，红色 `-` 用于移出。记录只保存在当前浏览器中，不占用或修改集思录账号自选。
 
-第一版完成并验收（2026-08-24）：单元测试 11/11；Playwright 真实页面 E2E 29/29；browser-skill 驱动真实 Chrome（登录态、311 行全量视图）实测加入／刷新持久化／移出恢复全部通过。扩展已在散帅 Chrome 中以未打包方式加载使用。
+## 功能
 
-## 已确认边界
+- 在可转债列表操作列中增加独立的本地 `+`／`-` 按钮。
+- 加入本地自选后，将当前转债名称标记为红色。
+- 页面刷新、表格重渲染和浏览器重启后恢复本地状态。
+- 数据仅保存在 `chrome.storage.local`，不提供云同步。
+- 不主动请求集思录接口，不读取或保存行情字段。
 
-- 使用 Chrome Manifest V3。
-- 第一版只维护本地自选可转债，不包含持仓功能。
-- 不绕过集思录会员权限或访问控制。
-- 不请求或抓取需要登录、会员或付费权限才能访问的接口数据。
-- 只处理当前页面已经渲染的表格行，不读取行情字段，不批量导出页面内容。
-- 与 `kzz-radar` 独立，不共享代码与数据。
+## 安装
 
-## 模块结构
+1. 下载本仓库源码并解压。
+2. 在 Chrome 打开 `chrome://extensions`。
+3. 开启右上角“开发者模式”。
+4. 点击“加载已解压的扩展程序”，选择本仓库根目录。
+5. 打开 [集思录可转债列表](https://www.jisilu.cn/web/data/cb/list)。
+
+更新源码后，需要在 `chrome://extensions` 中点击扩展的“重新加载”按钮。
+
+## 使用
+
+- 页面原有按钮位于左侧，本地按钮位于右侧。
+- 点击橙色 `+`：把当前转债加入本地自选，按钮变为红色 `-`，转债名称同步变红。
+- 点击红色 `-`：从本地自选移出当前转债，按钮和名称恢复原状态。
+- 鼠标悬停按钮可以查看“加入本地自选”或“移出本地自选”提示。
+
+## 数据与权限
+
+扩展只申请 `storage` 权限，并且只在以下页面运行：
 
 ```text
-.
-├── manifest.json            # MV3：仅 storage 权限，仅匹配目标页
-├── src/content/
-│   ├── watchlist-store.js   # 本地自选存储层（chrome.storage.local，唯一键 bondCode）
-│   ├── page-adapter.js      # 页面适配层（选择器、注入、状态样式；页面改版只改这里）
-│   └── main.js              # 主逻辑（初始化、点击处理、表格重渲染监听、跨标签同步）
-├── test/
-│   └── watchlist-store.test.js  # 存储层单元测试（node:test，零依赖）
-└── tools/
-    └── e2e-cb-list.js           # browser-skill 驱动真实 Chrome 的 E2E 验收
+https://www.jisilu.cn/web/data/cb/list*
 ```
 
-## 开发与验证
+每条本地自选只保存以下字段：
 
-- 单元测试：`node --test`（仓库根目录执行）。
-- E2E 验收：确认 browser-skill 扩展已连接真实 Chrome；源码改动后先在 `chrome://extensions` 重新加载本项目扩展，再在仓库根目录运行 `node tools/e2e-cb-list.js`。
-- 脚本通过 `bsk` 驱动隔离 Agent Window，验证真实登录态页面，并在结束前恢复它新增的本地自选测试数据；不会自动重新加载未打包扩展。
-- 手工验收：Chrome 进程重启后的持久化仍需手工验证；其余页面刷新、表格重渲染和 Agent Window 重建场景由脚本覆盖。
+- `bondCode`：可转债代码。
+- `bondName`：可转债名称。
+- `createdAt`：加入时间。
 
-## 文档入口
+扩展不会保存持仓、价格、涨跌幅、账号信息或 Cookie，也不会主动向集思录或第三方服务发送请求。卸载扩展会同时清除 `chrome.storage.local` 中的本地自选数据。
 
-- [`ROADMAP.md`](ROADMAP.md)：当前阶段、已完成事项、待办和验证记录。
-- [`docs/product/product-design.md`](docs/product/product-design.md)：第一版产品定义与验收标准。
-- [`docs/product/data-rules.md`](docs/product/data-rules.md)：本地自选字段与加减语义。
-- [`docs/product/ui-spec.md`](docs/product/ui-spec.md)：橙色 `+`／红色 `-` 的位置、状态和视觉区分。
-- [`docs/architecture/implementation-boundaries.md`](docs/architecture/implementation-boundaries.md)：最小权限、页面适配与本地存储边界。
-- [`docs/architecture/validation-plan.md`](docs/architecture/validation-plan.md)：验收与边界验证计划。
-- [`docs/research/README.md`](docs/research/README.md)：实施前必须完成的调研清单与证据要求。
-- [`docs/research/2026-08-22-boundary-research.md`](docs/research/2026-08-22-boundary-research.md)：目标页面、服务协议与 Chrome 能力的首轮调研记录。
-- [`docs/research/2026-08-24-cb-list-dom-structure.md`](docs/research/2026-08-24-cb-list-dom-structure.md)：目标页 DOM 结构、选择器与失效条件（页面适配依据）。
+## 已知限制
+
+- 仅支持集思录可转债列表页。
+- 本地自选不会在不同浏览器或设备之间同步。
+- 暂不提供批量管理、导入导出、备注、持仓或独立管理页面。
+- 插件依赖目标页面当前的 DOM 结构和图标字体；集思录改版后可能需要更新适配逻辑。
+
+## 开发与测试
+
+项目使用原生 Manifest V3 和 JavaScript，没有运行时第三方依赖。
+
+```bash
+node --test
+```
+
+真实页面 E2E 使用 `browser-skill` 的 `bsk` CLI 驱动已连接的 Chrome。完成环境配置并重新加载扩展后运行：
+
+```bash
+node tools/e2e-cb-list.js
+```
+
+E2E 会临时加入两条初始为未选状态的记录，并在结束前恢复原状态。详细产品、架构和验证设计见 [`docs/`](docs/)，当前进度见 [`ROADMAP.md`](ROADMAP.md)。
+
+## 免责声明
+
+本项目是独立的开源浏览器扩展，与集思录无隶属、合作或授权关系。使用者应自行遵守目标网站的服务条款。本项目不提供投资建议，也不保证目标页面改版后的持续兼容性。
 
 ## License
 

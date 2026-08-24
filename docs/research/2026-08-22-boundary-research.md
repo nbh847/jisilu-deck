@@ -9,7 +9,7 @@
 
 ### 来源
 
-- 散帅指定：`https://www.jisilu.cn/web/data/cb/list`。
+- 项目目标页面：`https://www.jisilu.cn/web/data/cb/list`。
 - 集思录首页“实时投资数据”区域的“可转债”入口指向同一 URL。
 
 ### 实测事实

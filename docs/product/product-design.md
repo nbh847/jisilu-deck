@@ -5,7 +5,7 @@
 
 ## 1. 要解决的问题
 
-集思录非会员自选数量有限。散帅需要在可转债列表中直接维护一份不受站内数量限制的本地自选记录，不需要持仓、行情、评分或独立管理面板。
+用户需要在可转债列表中维护一份独立于站内账号自选的浏览器本地清单，不需要持仓、行情、评分或独立管理面板。
 
 ## 2. 第一版方案
 
@@ -68,6 +68,6 @@
 
 ## 7. 当前阶段
 
-第一版已按本定义实现（`manifest.json` + `src/content/`），并于 2026-08-24 通过真实页面自动化验收（29/29 项），等待散帅在自有 Chrome 中做最终手工验收。
+第一版已按本定义实现（`manifest.json` + `src/content/`），并于 2026-08-24 通过单元测试（11/11）和真实页面 E2E（24/24）。
 
 数据语义见 [`data-rules.md`](data-rules.md)，按钮交互见 [`ui-spec.md`](ui-spec.md)，实施边界见 [`../architecture/implementation-boundaries.md`](../architecture/implementation-boundaries.md)，验证要求见 [`../architecture/validation-plan.md`](../architecture/validation-plan.md)。

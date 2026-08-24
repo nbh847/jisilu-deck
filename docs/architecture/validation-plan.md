@@ -1,6 +1,6 @@
 # 第一版验证计划
 
-> 状态：已执行第一版验收；当前浏览器验收统一使用 browser-skill 连接散帅真实 Chrome。历史 Playwright 29/29 结果保留为当时记录，不再作为当前运行入口。
+> 状态：已执行第一版验收；当前真实页面 E2E 统一使用 `tools/e2e-cb-list.js`。
 > 更新日期：2026-08-24
 
 ## 1. 权限
@@ -43,8 +43,8 @@
 
 ## 6. 真实页面验证
 
-1. 确认 browser-skill 扩展已连接真实 Chrome，`bsk status` 显示一个可用浏览器。
-2. 插件源码改动后，先在 Chrome `chrome://extensions` 对本项目未打包扩展执行“重新加载”。browser-skill 使用真实 Chrome 已加载的版本，不会自动从仓库重新加载扩展。
+1. 确认 browser-skill 扩展已连接测试用 Chrome，`bsk status` 显示一个可用浏览器。
+2. 插件源码改动后，先在 Chrome `chrome://extensions` 对本项目未打包扩展执行“重新加载”。E2E 使用浏览器当前已加载的版本，不会自动从仓库重新加载扩展。
 3. 在仓库根目录运行 `node tools/e2e-cb-list.js`。脚本必须遵循 `bsk session start` → 轻量初始页 snapshot → 打开目标页并验证 → `bsk session stop` 的生命周期；异常路径也必须停止 session。
-4. 自动验收只选择初始为本地未选状态的行，结束前恢复其原状态，不得删除散帅已有本地自选。Chrome 进程重启场景仍由手工验收完成，脚本只验证页面刷新、表格重渲染和 browser-skill Agent Window 重建后的持久化。
+4. 自动验收只选择初始为本地未选状态的行，结束前恢复其原状态，不得删除已有本地自选。Chrome 进程重启场景仍由手工验收完成，脚本只验证页面刷新、表格重渲染和 Agent Window 重建后的持久化。
 5. 把验证方式与结果记录到 `ROADMAP.md`；全部通过后才能标记完成。

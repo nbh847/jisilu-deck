@@ -1,7 +1,7 @@
 # 可转债列表页 DOM 结构与选择器调研
 
 > 调研日期：2026-08-24
-> 方法：Playwright Chromium 未登录会话打开目标页，等待表格渲染后只读提取结构与计算样式；未点击任何站内按钮，未读取 Cookie、Token 或接口响应。
+> 方法：Chromium 未登录会话打开目标页，等待表格渲染后只读提取结构与计算样式；未点击任何站内按钮，未读取 Cookie、Token 或接口响应。
 > 用途：为 `src/content/page-adapter.js` 提供选择器依据；页面改版时先复核本文再改适配模块。
 
 ## 1. 目标页与渲染前提
@@ -44,7 +44,7 @@
 
 - 未登录新会话下站内自选为空，全表都是 `+`，当时页面上采不到站内红 `-` 的色值。
 - 首次调研发现的 6 个「-」元素是行情列的占位符 `span.color-darkgray.font-style-italic`（`rgb(169,169,169)`），与自选无关。
-- 2026-08-24 通过 browser-skill 在散帅真实 Chrome 登录态页面只读核对 311 行操作列，确认原站 `+` 为 `U+E61E`、深蓝色 `rgb(32, 103, 152)`，原站 `-` 为 `U+E61D`、红色 `rgb(221, 24, 23)`（`#dd1817`）；两者均使用 `jisilu-iconfont`，图标 rect 均为 `13×13px`。
+- 2026-08-24 在真实 Chrome 页面只读核对操作列，确认原站 `+` 为 `U+E61E`、深蓝色 `rgb(32, 103, 152)`，原站 `-` 为 `U+E61D`、红色 `rgb(221, 24, 23)`（`#dd1817`）；两者均使用 `jisilu-iconfont`，图标 rect 均为 `13×13px`。
 - 本地按钮据此复用原站图标字体和字形；本地 `+` 只改为橙色 `#e67e22`，本地 `-` 与已选名称直接使用原站红色 `#dd1817`。
 
 ## 5. 插件按钮注入方案（依据实测几何）
@@ -67,4 +67,4 @@
 - 代码格 `href` 前缀不再是 `/data/convert_bond_detail/`；
 - 操作列 `<col width="32">` 宽度约定变化。
 
-复核方法：使用 browser-skill 连接真实 Chrome，先完成轻量页 snapshot，再打开目标 URL；等待 `table.jsl-table-body tbody` 渲染后，通过受控 `bsk evaluate` 提取操作列结构与计算样式，结束后立即停止 session。
+复核方法：运行 `tools/e2e-cb-list.js` 连接测试用 Chrome；等待 `table.jsl-table-body tbody` 渲染后提取操作列结构与计算样式，并在结束前恢复测试数据。

@@ -1,4 +1,4 @@
-// jisilu-deck 真实 Chrome E2E：通过 browser-skill 的 bsk CLI 驱动散帅已连接的浏览器。
+// jisilu-deck 真实 Chrome E2E：通过 browser-skill 的 bsk CLI 驱动已连接的测试浏览器。
 // 运行前：在 chrome://extensions 重新加载本项目未打包扩展，然后执行：
 //   node tools/e2e-cb-list.js
 //
