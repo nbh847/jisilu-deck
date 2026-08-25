@@ -55,11 +55,19 @@
 - 定位：操作格本身 `position:sticky`（已定位），本地锚点用 `position:absolute; left:18px; top:50%; translateY(-50%); width:13px; height:13px`，图标 span 使用原站 `13×13px` 字形并移除会撑出剩余空间的外边距。绝对定位不参与表格布局，保证「不扩展 32px 列宽、不覆盖原按钮」。
 - 名称标红：设 `td[3] > span` 的内联 `color`，恢复时 `removeProperty('color')` 回落到页面原样式（名称 span 原本无内联色，实测安全）。
 
-## 6. 页面自有状态（只观察不使用）
+## 6. 顶部筛选条结构
+
+2026-08-25 在真实 Chrome 中确认顶部筛选条结构：
+
+- 原站“仅看自选／仅看持仓”位于 `.table-top .table-bar .el-checkbox-group.attention`，组内文字同时包含“仅看自选”和“仅看持仓”。
+- “显示已拉黑”是该按钮组之后的同级元素。
+- 插件筛选按钮作为按钮组的同级元素插在两者之间，不进入 Vue 管理的原站按钮组；E2E 已确认按钮只注入一次且顺序正确。
+
+## 7. 页面自有状态（只观察不使用）
 
 - `localStorage` 仅见 `data-cb-index`、`data-cb-filters:0`（站内筛选与列设置 key 名），插件数据全部走 `chrome.storage.local`，互不影响。
 
-## 7. 选择器失效条件与复核入口
+## 8. 选择器失效条件与复核入口
 
 以下任一变化即视为页面改版，需重新调研并只改 `page-adapter.js`：
 
@@ -68,5 +76,6 @@
 - 操作锚点 `title` 前缀不再是 `加[`；
 - 代码格 `href` 前缀不再是 `/data/convert_bond_detail/`；
 - 操作列 `<col width="32">` 宽度约定变化。
+- 顶部 `.table-top .table-bar .el-checkbox-group.attention` 不再同时包含“仅看自选”和“仅看持仓”。
 
 复核方法：运行 `tools/e2e-cb-list.js` 连接测试用 Chrome；等待 `table.jsl-table-body tbody` 渲染后提取操作列结构与计算样式，并在结束前恢复测试数据。

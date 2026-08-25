@@ -14,6 +14,8 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
   const observers = [];
   const timers = [];
   const intervals = [];
+  const listeners = {};
+  const filterStates = [];
 
   const adapter = {
     findMainTable: () => currentTable,
@@ -22,7 +24,11 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
       return [{ id: 'row' }];
     },
     ensureButton: () => ({ code: '123456' }),
+    ensureFilterButton: () => ({}),
     applyState: () => {},
+    applyLocalFilter: (table, watched, active) => {
+      filterStates.push({ table, active, watched: [...watched] });
+    },
     readRow: () => null,
     showHint: () => {},
   };
@@ -35,7 +41,7 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
   const document = {
     readyState: 'complete',
     body: {},
-    addEventListener: () => {},
+    addEventListener: (type, listener) => { listeners[type] = listener; },
     contains: () => true,
   };
 
@@ -69,6 +75,7 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
   return {
     observers,
     scannedTables,
+    filterStates,
     setCurrentTable(table) {
       currentTable = table;
     },
@@ -79,6 +86,18 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
     runReconcileInterval() {
       assert.strictEqual(intervals.length, 1, '应只启动一个持续状态对账循环');
       intervals[0]();
+    },
+    clickFilter() {
+      listeners.click({
+        target: {
+          closest(selector) {
+            if (selector === 'button.jd-local-filter') return {};
+            return null;
+          },
+        },
+        preventDefault() {},
+        stopPropagation() {},
+      });
     },
   };
 }
@@ -122,6 +141,20 @@ test('内容脚本从封闭基金过渡页启动时，应立即监听并等待�
   harness.setCurrentTable(returnedTable);
   harness.runReconcileInterval();
   assert.deepStrictEqual(harness.scannedTables, [returnedTable]);
+});
+
+test('顶部按钮切换本地筛选，并在同一内容脚本会话中保持状态', async () => {
+  const harness = createHarness();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(harness.filterStates.at(-1).active, false);
+
+  harness.clickFilter();
+  assert.strictEqual(harness.filterStates.at(-1).active, true);
+  harness.runReconcileInterval();
+  assert.strictEqual(harness.filterStates.at(-1).active, true, '持续对账不得重置筛选状态');
+
+  harness.clickFilter();
+  assert.strictEqual(harness.filterStates.at(-1).active, false);
 });
 
 test('Manifest 覆盖可转债入口和统一数据板块 SPA 过渡路径', () => {

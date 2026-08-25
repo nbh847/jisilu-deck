@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "jisilu-deck",
-  "version": "0.1.0",
-  "description": "在集思录可转债列表操作列增加本地自选按钮：橙色 + 加入、红色 - 移出，记录保存在浏览器本地。",
+  "version": "0.2.0",
+  "description": "在集思录可转债列表维护本地自选，并支持仅显示当前站内结果中的本地自选。",
   "permissions": ["storage"],
   "content_scripts": [
     {

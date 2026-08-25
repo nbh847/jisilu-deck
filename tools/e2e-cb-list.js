@@ -15,6 +15,7 @@ const MINUS_ICON = '\ue61d';
 const PLUS_RGB = 'rgb(230, 126, 34)';
 const RED_RGB = 'rgb(221, 24, 23)';
 const SITE_BLUE_RGB = 'rgb(32, 103, 152)';
+const FILTER_ACTIVE_RGB = 'rgb(230, 126, 34)';
 const SCREENSHOT_PATH = '/tmp/jd-bsk-e2e.png';
 
 const results = [];
@@ -80,8 +81,8 @@ function navigate(session) {
 
 function evaluate(session, expression) {
   const response = runBsk(
-    ['evaluate', '--session', session, '--timeout', '30s', '--json', expression],
-    { json: true, timeout: 45000 }
+    ['evaluate', '--session', session, '--timeout', '60s', '--json', expression],
+    { json: true, timeout: 70000 }
   );
   if (response.ok !== true) {
     const message = response.exception_details?.text || response.message || JSON.stringify(response);
@@ -118,6 +119,7 @@ const PHASE_ONE = `
   const PLUS_RGB = ${JSON.stringify(PLUS_RGB)};
   const RED_RGB = ${JSON.stringify(RED_RGB)};
   const SITE_BLUE = ${JSON.stringify(SITE_BLUE_RGB)};
+  const FILTER_ACTIVE = ${JSON.stringify(FILTER_ACTIVE_RGB)};
   const checks = [];
   const check = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail });
   const rows = () => [...document.querySelectorAll('table.jsl-table-body > tbody > tr')]
@@ -147,10 +149,35 @@ const PHASE_ONE = `
   };
   await waitFor(() => {
     const current = rows();
-    return current.length >= 10 && current.every((tr) => tr.children[1].querySelector('a.jd-local-btn'));
+    return current.length >= 10
+      && current.every((tr) => tr.children[1].querySelector('a.jd-local-btn'))
+      && document.querySelector('button.jd-local-filter');
   }, '等待插件按钮注入超时；请先在 chrome://extensions 重新加载 jisilu-deck');
 
   const all = rows().map(rowInfo);
+  const filterBtn = document.querySelector('button.jd-local-filter');
+  const siteGroup = [...document.querySelectorAll('.table-top .table-bar .el-checkbox-group.attention')]
+    .find((group) => {
+      const text = (group.textContent || '').replace(/\s+/g, '');
+      return text.includes('仅看自选') && text.includes('仅看持仓');
+    });
+  const showBlocked = siteGroup && [...siteGroup.parentElement.children]
+    .find((element) => element !== siteGroup && (element.textContent || '').includes('显示已拉黑'));
+  const nativeInner = siteGroup && siteGroup.querySelector('.el-checkbox-button__inner');
+  const siteCheckedBefore = siteGroup && [...siteGroup.querySelectorAll('input')].map((input) => input.checked);
+
+  check('本地筛选按钮只注入一次', document.querySelectorAll('button.jd-local-filter').length === 1);
+  check('本地筛选按钮位于原站筛选组之后、显示已拉黑之前', Boolean(
+    siteGroup && showBlocked
+    && filterBtn.previousElementSibling === siteGroup
+    && filterBtn.nextElementSibling === showBlocked
+  ));
+  check('本地筛选按钮尺寸和字号与原站 mini 按钮一致', Boolean(nativeInner)
+    && Math.abs(filterBtn.getBoundingClientRect().height - nativeInner.getBoundingClientRect().height) < 0.6
+    && getComputedStyle(filterBtn).fontSize === getComputedStyle(nativeInner).fontSize);
+  check('本地筛选按钮默认关闭且为白底灰字', filterBtn.getAttribute('aria-pressed') === 'false'
+    && getComputedStyle(filterBtn).backgroundColor === 'rgb(255, 255, 255)'
+    && getComputedStyle(filterBtn).color === 'rgb(96, 98, 102)');
   check('每条数据行注入且只有一个本地按钮', all.every((item) => item.tr.children[1].querySelectorAll('a.jd-local-btn').length === 1), 'rows=' + all.length);
   check('操作列宽保持 32px', all.every((item) => Math.abs(item.tr.children[1].getBoundingClientRect().width - 32) < 0.6));
   check('本地按钮全部使用 jisilu-icons 子元素', all.every((item) => item.icon && getComputedStyle(item.icon).fontFamily.includes('jisilu-iconfont')));
@@ -197,6 +224,36 @@ const PHASE_ONE = `
   await waitFor(() => rowInfo(second.tr).glyph === MINUS, '第二条记录加入本地自选超时');
   check('两条测试记录可独立加入', rowInfo(first.tr).glyph === MINUS && rowInfo(second.tr).glyph === MINUS);
 
+  filterBtn.click();
+  await waitFor(() => filterBtn.getAttribute('aria-pressed') === 'true'
+    && rows().some((tr) => tr.classList.contains('jd-local-filter-hidden'))
+    && getComputedStyle(filterBtn).backgroundColor === FILTER_ACTIVE
+    && getComputedStyle(filterBtn).borderColor === FILTER_ACTIVE
+    && getComputedStyle(filterBtn).color === 'rgb(255, 255, 255)', '开启本地筛选超时');
+  const visibleWhileFiltered = rows().filter((tr) => !tr.classList.contains('jd-local-filter-hidden'));
+  check('开启后为橙底白字', getComputedStyle(filterBtn).backgroundColor === FILTER_ACTIVE
+    && getComputedStyle(filterBtn).borderColor === FILTER_ACTIVE
+    && getComputedStyle(filterBtn).color === 'rgb(255, 255, 255)');
+  check('开启后只显示本地自选行', visibleWhileFiltered.length > 0
+    && visibleWhileFiltered.every((tr) => rowInfo(tr).glyph === MINUS), 'visible=' + visibleWhileFiltered.length);
+  check('开启后两条测试本地自选仍可见', !first.tr.classList.contains('jd-local-filter-hidden')
+    && !second.tr.classList.contains('jd-local-filter-hidden'));
+
+  first.btn.click();
+  await waitFor(() => rowInfo(first.tr).glyph === PLUS
+    && first.tr.classList.contains('jd-local-filter-hidden'), '筛选开启时移出记录未立即隐藏');
+  check('筛选开启时移出记录立即隐藏且不影响其他本地自选', !second.tr.classList.contains('jd-local-filter-hidden')
+    && rowInfo(second.tr).glyph === MINUS);
+
+  filterBtn.click();
+  await waitFor(() => filterBtn.getAttribute('aria-pressed') === 'false'
+    && rows().every((tr) => !tr.classList.contains('jd-local-filter-hidden')), '关闭本地筛选后恢复超时');
+  check('关闭后恢复全部当前站内结果', rows().every((tr) => tr.getClientRects().length > 0));
+  check('本地筛选未改变原站筛选状态', JSON.stringify([...siteGroup.querySelectorAll('input')].map((input) => input.checked)) === JSON.stringify(siteCheckedBefore));
+
+  first.btn.click();
+  await waitFor(() => rowInfo(first.tr).glyph === MINUS, '重新加入第一条测试记录超时');
+
   return { checks, codes: [first.code, second.code] };
 })()
 `;
@@ -230,10 +287,16 @@ function phaseTwoExpression(codes) {
       throw new Error(message);
     };
     await waitFor(() => codes.every((code) => state(code).glyph), '刷新后等待插件状态恢复超时');
+    const filterBtn = await waitFor(() => document.querySelector('button.jd-local-filter'), '刷新后等待本地筛选按钮恢复超时');
+    check('页面刷新后本地筛选默认关闭', filterBtn.getAttribute('aria-pressed') === 'false'
+      && rows().every((tr) => !tr.classList.contains('jd-local-filter-hidden')));
     check('页面刷新后两条记录恢复红色 - 与名称标红', codes.every((code) => {
       const item = state(code);
       return item.glyph === MINUS && item.nameColor === RED_RGB && item.nameInline === RED_RGB;
     }));
+
+    filterBtn.click();
+    await waitFor(() => filterBtn.getAttribute('aria-pressed') === 'true', '刷新后开启本地筛选超时');
 
     const priceHeader = [...document.querySelectorAll('.jsl-table-header th')]
       .find((th) => (th.innerText || '').trim() === '现价');
@@ -248,15 +311,21 @@ function phaseTwoExpression(codes) {
       await waitFor(() => codes.every((code) => state(code).glyph), '排序重渲染后等待插件状态恢复超时');
       check('排序重渲染后每行仍只有一个本地按钮', rows().every((tr) => tr.children[1].querySelectorAll('a.jd-local-btn').length === 1));
       check('排序重渲染后测试记录状态恢复', codes.every((code) => state(code).glyph === MINUS));
+      check('排序重渲染后本地筛选继续生效', filterBtn.getAttribute('aria-pressed') === 'true'
+        && rows().filter((tr) => !tr.classList.contains('jd-local-filter-hidden')).every((tr) => state((tr.children[2].innerText || '').trim()).glyph === MINUS));
     } else {
       check('排序重渲染场景', true, '未找到现价表头，跳过');
     }
 
     state(codes[0]).btn.click();
-    await waitFor(() => state(codes[0]).glyph === PLUS, '移出第一条测试记录超时');
+    await waitFor(() => state(codes[0]).glyph === PLUS && state(codes[0]).tr.classList.contains('jd-local-filter-hidden'), '移出第一条测试记录超时');
     check('移出只影响当前记录', state(codes[0]).glyph === PLUS && state(codes[0]).nameInline === '' && state(codes[1]).glyph === MINUS);
+    filterBtn.click();
+    await waitFor(() => filterBtn.getAttribute('aria-pressed') === 'false', '重新加入前关闭筛选超时');
     state(codes[0]).btn.click();
     await waitFor(() => state(codes[0]).glyph === MINUS, '重新加入第一条测试记录超时');
+    filterBtn.click();
+    await waitFor(() => filterBtn.getAttribute('aria-pressed') === 'true', '截图前重新开启筛选超时');
     return { checks };
   })()
   `;

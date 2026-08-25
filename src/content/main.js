@@ -13,6 +13,7 @@
   const adapter = NS.pageAdapter;
   let table = null;
   let watched = new Set();
+  let localFilterActive = false;
   let scanTimer = 0;
 
   async function refreshWatched() {
@@ -29,11 +30,13 @@
     // SPA 分类切换可能会把旧表格留在 DOM 中；每轮都以当前可见目标表格为准。
     table = adapter.findMainTable();
     if (!table) return;
+    adapter.ensureFilterButton(localFilterActive);
     const rows = adapter.dataRows(table);
     for (let i = 0; i < rows.length; i++) {
       const hook = adapter.ensureButton(rows[i]);
       if (hook) adapter.applyState(hook, watched.has(hook.code));
     }
+    adapter.applyLocalFilter(table, watched, localFilterActive);
   }
 
   function scheduleScan() {
@@ -68,10 +71,18 @@
     const target = ev.target;
     if (!target || !target.closest) return;
     const btn = target.closest('a.jd-local-btn');
-    if (!btn) return;
+    if (btn) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onLocalButtonClick(btn);
+      return;
+    }
+    const filterBtn = target.closest('button.jd-local-filter');
+    if (!filterBtn) return;
     ev.preventDefault();
     ev.stopPropagation();
-    onLocalButtonClick(btn);
+    localFilterActive = !localFilterActive;
+    scan();
   });
 
   chrome.storage.onChanged.addListener(function (changes, area) {

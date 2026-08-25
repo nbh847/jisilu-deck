@@ -12,11 +12,24 @@
   const MINUS_ICON = '\ue61d';  // 原站 jisilu-iconfont 的 -
   const BTN_CLASS = 'jd-local-btn';
   const HINT_CLASS = 'jd-local-hint';
+  const FILTER_BTN_CLASS = 'jd-local-filter';
+  const FILTER_HIDDEN_CLASS = 'jd-local-filter-hidden';
+  const FILTER_EMPTY_CLASS = 'jd-local-filter-empty';
+  const FILTER_STYLE_ID = 'jd-local-filter-style';
 
   // 只在值变化时写入，避免重复触发观察器
   function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
   function setStyle(el, prop, value) { if (el.style[prop] !== value) el.style[prop] = value; }
   function setAttr(el, name, value) { if (el.getAttribute(name) !== value) el.setAttribute(name, value); }
+  function ensureFilterStyle() {
+    if (!document.getElementById || document.getElementById(FILTER_STYLE_ID)) return;
+    const host = document.head || document.documentElement;
+    if (!host) return;
+    const style = document.createElement('style');
+    style.id = FILTER_STYLE_ID;
+    style.textContent = '.' + FILTER_HIDDEN_CLASS + '{display:none!important;}';
+    host.appendChild(style);
+  }
 
   NS.pageAdapter = {
     PLUS_COLOR: PLUS_COLOR,
@@ -48,6 +61,37 @@
         if (rows[i].children[0] && rows[i].children[0].classList.contains('sticky-data')) out.push(rows[i]);
       }
       return out;
+    },
+
+    // 顶部筛选按钮独立挂在原站按钮组之后，不进入 Vue 管理的按钮组内部
+    ensureFilterButton(active) {
+      const groups = document.querySelectorAll('.table-top .table-bar .el-checkbox-group.attention');
+      let group = null;
+      for (let i = 0; i < groups.length; i++) {
+        const text = (groups[i].textContent || '').replace(/\s+/g, '');
+        if (text.includes('仅看自选') && text.includes('仅看持仓')) {
+          group = groups[i];
+          break;
+        }
+      }
+      if (!group || !group.parentElement) return null;
+
+      const bar = group.parentElement;
+      let btn = bar.querySelector(':scope > button.' + FILTER_BTN_CLASS);
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = FILTER_BTN_CLASS;
+        btn.textContent = '仅看本地自选';
+        btn.style.cssText = 'box-sizing:border-box;margin-left:8px;padding:7px 15px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;color:#606266;font-family:inherit;font-size:12px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;outline:0;transition:background-color .15s,border-color .15s,color .15s;';
+        bar.insertBefore(btn, group.nextSibling);
+      }
+      setAttr(btn, 'aria-label', '仅看本地自选');
+      setAttr(btn, 'aria-pressed', active ? 'true' : 'false');
+      setStyle(btn, 'backgroundColor', active ? PLUS_COLOR : '#fff');
+      setStyle(btn, 'borderColor', active ? PLUS_COLOR : '#dcdfe6');
+      setStyle(btn, 'color', active ? '#fff' : '#606266');
+      return btn;
     },
 
     // 读取当前行 {code, name, opCell, nameSpan}；读不到合法代码或名称返回 null（该行不允许加入）
@@ -106,6 +150,33 @@
         setAttr(btn, 'aria-label', '加入本地自选');
         if (hook.nameSpan.style.color !== '') hook.nameSpan.style.removeProperty('color');
       }
+    },
+
+    // 本地筛选只作用于当前已渲染行，与站内筛选取交集；关闭时完整移除插件隐藏类
+    applyLocalFilter(table, watched, active) {
+      ensureFilterStyle();
+      const rows = this.dataRows(table);
+      let visibleCount = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const info = this.readRow(rows[i]);
+        const hidden = active && (!info || !watched.has(info.code));
+        rows[i].classList.toggle(FILTER_HIDDEN_CLASS, hidden);
+        if (!hidden) visibleCount++;
+      }
+
+      const container = table.closest('.jsl-table') || table.parentElement;
+      if (container) {
+        let empty = container.querySelector(':scope > .' + FILTER_EMPTY_CLASS);
+        if (!empty) {
+          empty = document.createElement('div');
+          empty.className = FILTER_EMPTY_CLASS;
+          empty.textContent = '当前筛选条件下暂无本地自选';
+          empty.style.cssText = 'padding:24px 0;text-align:center;font-size:14px;color:#909399;';
+          container.appendChild(empty);
+        }
+        empty.hidden = !(active && visibleCount === 0);
+      }
+      return visibleCount;
     },
 
     // 保存失败时的局部提示：按钮附近短暂显示，不弹独立面板（ui-spec.md §3）
