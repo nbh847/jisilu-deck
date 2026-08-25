@@ -21,6 +21,7 @@
 - 单元测试：`node --test`，11/11 通过。
 - 真实页面 E2E：`node tools/e2e-cb-list.js`，24/24 通过。
 - 已覆盖按钮注入、图标尺寸与颜色、加入／移出、刷新、排序重渲染、Agent Window 重建和测试数据清理。
+- Release 发布包：`release/jisilu-deck-v0.1.0.zip` 已生成，包含 6 个必要运行与说明文件，Manifest 版本检查为 `0.1.0`；`release/` 已设置为 Git 忽略目录。
 
 ## 已知限制
 
