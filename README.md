@@ -43,11 +43,14 @@ jisilu-deck 在页面原有操作按钮右侧增加一套独立的本地自选�
 
 ## 数据与权限
 
-扩展只申请 `storage` 权限，并且只在以下页面运行：
+扩展只申请 `storage` 权限。为了在集思录数据板块的 SPA 导航中从其他品种切回可转债后恢复按钮，内容脚本加载范围为：
 
 ```text
-https://www.jisilu.cn/web/data/cb/list*
+https://www.jisilu.cn/web/data/cb/*
+https://www.jisilu.cn/data/*
 ```
+
+在 `/data/*` 页面中，插件只等待页面内导航返回可转债，不会向封闭基金、债券或其他品种表格注入按钮或读取其数据。
 
 每条本地自选只保存以下字段：
 

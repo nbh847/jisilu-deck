@@ -96,8 +96,11 @@ function staticChecks() {
   check('权限只有 storage', JSON.stringify(manifest.permissions) === JSON.stringify(['storage']), JSON.stringify(manifest.permissions));
   const contentScript = manifest.content_scripts && manifest.content_scripts[0];
   check(
-    '匹配范围只有目标页',
-    contentScript && JSON.stringify(contentScript.matches) === JSON.stringify([`${TARGET_URL}*`]),
+    '匹配范围只有可转债与数据板块 SPA 过渡页',
+    contentScript && JSON.stringify(contentScript.matches) === JSON.stringify([
+      'https://www.jisilu.cn/web/data/cb/*',
+      'https://www.jisilu.cn/data/*',
+    ]),
     JSON.stringify((contentScript && contentScript.matches) || null)
   );
   check(

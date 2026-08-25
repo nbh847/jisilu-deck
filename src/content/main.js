@@ -1,6 +1,7 @@
 // 主逻辑：连接存储层与页面适配层（implementation-boundaries.md §4）
 // - 初始化时恢复各行本地选中状态
 // - 表格重渲染（分页/排序/筛选）后补齐按钮，不重复注入
+// - SPA 切换丢失 DOM 事件时，低频对账保证切回后最终恢复
 // - storage.onChanged 统一重放状态：覆盖本页写入、多标签页同步与浏览器重启恢复
 (function () {
   'use strict';
@@ -25,8 +26,9 @@
   }
 
   function scan() {
-    if (!table || !document.contains(table)) table = adapter.findMainTable();
-    if (!table) return; // 找不到目标表格：本轮跳过（boot 的轮询会继续等）
+    // SPA 分类切换可能会把旧表格留在 DOM 中；每轮都以当前可见目标表格为准。
+    table = adapter.findMainTable();
+    if (!table) return;
     const rows = adapter.dataRows(table);
     for (let i = 0; i < rows.length; i++) {
       const hook = adapter.ensureButton(rows[i]);
@@ -80,27 +82,13 @@
   });
 
   async function boot() {
-    // 目标页是 Vue 单页应用：内容脚本在 document_idle 执行时表格通常还没渲染，
-    // 轮询等主表出现后再注入；观察器挂 document.body，覆盖行重渲染与 SPA 路由重挂载
-    if (table || adapter.findMainTable()) {
-      start();
-      return;
-    }
-    const poll = setInterval(function () {
-      if (adapter.findMainTable()) {
-        clearInterval(poll);
-        start();
-      }
-    }, 500);
-  }
-
-  async function start() {
-    table = adapter.findMainTable();
-    if (!table) return;
+    // 内容脚本同时加载在可转债与 `/data/*` SPA 过渡页；无目标表格时只等待，不写 DOM。
     new MutationObserver(scheduleScan).observe(document.body, { childList: true, subtree: true });
+    // 集思录 SPA 品种切换不保证产生可观察的 DOM 事件；低频对账作为最终一致性保障。
+    setInterval(scan, 1000);
     await refreshWatched();
     scan();
-    console.log('[jisilu-deck] 已在可转债列表注入本地自选按钮');
+    if (table) console.log('[jisilu-deck] 已在可转债列表注入本地自选按钮');
   }
 
   if (document.readyState === 'loading') {

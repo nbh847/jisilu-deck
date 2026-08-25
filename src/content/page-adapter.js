@@ -22,14 +22,19 @@
     PLUS_COLOR: PLUS_COLOR,
     RED_COLOR: RED_COLOR,
 
-    // 主列表表 = 第一张「直接子行 td[1] 含站内自选按钮」的 table.jsl-table-body
+    // 主列表表 = 当前可见且直接子行同时含站内自选按钮与可转债详情链接的 table.jsl-table-body
     findMainTable() {
       const tables = document.querySelectorAll('table.jsl-table-body');
       for (let i = 0; i < tables.length; i++) {
+        if (tables[i].getClientRects().length === 0) continue;
         const rows = tables[i].querySelectorAll(':scope > tbody > tr');
         for (let j = 0; j < rows.length; j++) {
           const opCell = rows[j].children[1];
-          if (opCell && opCell.querySelector('a[title^="加["]')) return tables[i];
+          const codeCell = rows[j].children[2];
+          if (
+            opCell && opCell.querySelector('a[title^="加["]')
+            && codeCell && codeCell.querySelector('a[href^="/data/convert_bond_detail/"]')
+          ) return tables[i];
         }
       }
       return null;

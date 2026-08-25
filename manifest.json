@@ -6,7 +6,10 @@
   "permissions": ["storage"],
   "content_scripts": [
     {
-      "matches": ["https://www.jisilu.cn/web/data/cb/list*"],
+      "matches": [
+        "https://www.jisilu.cn/web/data/cb/*",
+        "https://www.jisilu.cn/data/*"
+      ],
       "js": [
         "src/content/watchlist-store.js",
         "src/content/page-adapter.js",
