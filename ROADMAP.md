@@ -34,6 +34,8 @@
 - `0.2.0` 单元测试基线：`node --test`，20/20 通过。
 - `0.3.0` 单元测试：`node --test`，28/28 通过。
 - QDII 真实页面 E2E：`node tools/e2e-qdii.js`，30/30 通过；测试数据已恢复，截图为 `/tmp/jd-bsk-qdii-e2e.png`，Agent Window 已关闭。
+- `release/jisilu-deck-v0.3.0.zip` 已生成并校验：包含 6 个必要运行与说明文件，Manifest 版本为 `0.3.0`，包内文件与当前源码一致，SHA-256 为 `dd7ea6bc2fd7990bf9e49fadfd7a491e09da0131904fb507289cc8782e7425ac`。
+- `release/jisilu-deck-v0.3.0-release-notes.md` 已生成，Release Title 为 `jisilu-deck v0.3.0`；GitHub tag、Release 与附件尚未创建或上传。
 - 真实页面 E2E：`node tools/e2e-cb-list.js`，36/36 通过；测试数据已恢复，Agent Window 已关闭。
 - 真实 Chrome 手工验收：散帅确认“仅看本地自选”功能正常。
 - 真实 Chrome 分类切换：重新加载扩展后，「可转债 → 封闭基金 → 可转债」返回时本地按钮自动恢复。
