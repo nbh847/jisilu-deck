@@ -7,13 +7,24 @@
   'use strict';
 
   const NS = globalThis.jisiluDeck;
-  if (!NS || !NS.createWatchlistStore || !NS.pageAdapter) return;
+  if (!NS || !NS.createWatchlistStore || !NS.createQdiiWatchlistStore || !NS.pageAdapter) return;
 
   const store = NS.createWatchlistStore(chrome.storage.local);
+  const qdiiStore = NS.createQdiiWatchlistStore(chrome.storage.local);
   const adapter = NS.pageAdapter;
   let table = null;
   let watched = new Set();
   let localFilterActive = false;
+  const qdiiWatched = {
+    europe: new Set(),
+    commodity: new Set(),
+    asia: new Set(),
+  };
+  const qdiiFilterActive = {
+    europe: false,
+    commodity: false,
+    asia: false,
+  };
   let scanTimer = 0;
 
   async function refreshWatched() {
@@ -24,12 +35,22 @@
       // 读取失败：按空处理（按钮全为 +）；实际点击写入失败时按钮附近会给出失败提示
       watched = new Set();
     }
+    const categories = Object.keys(qdiiWatched);
+    for (let i = 0; i < categories.length; i++) {
+      const category = categories[i];
+      try {
+        const records = await qdiiStore.list(category);
+        qdiiWatched[category] = new Set(records.map(function (r) { return r.code; }));
+      } catch (e) {
+        qdiiWatched[category] = new Set();
+      }
+    }
   }
 
-  function scan() {
+  function scanCb() {
     // SPA 分类切换可能会把旧表格留在 DOM 中；每轮都以当前可见目标表格为准。
     table = adapter.findMainTable();
-    if (!table) return;
+    if (!table) return false;
     adapter.ensureFilterButton(localFilterActive);
     const rows = adapter.dataRows(table);
     for (let i = 0; i < rows.length; i++) {
@@ -37,6 +58,34 @@
       if (hook) adapter.applyState(hook, watched.has(hook.code));
     }
     adapter.applyLocalFilter(table, watched, localFilterActive);
+    return true;
+  }
+
+  function scanQdii() {
+    const contexts = adapter.findQdiiTables();
+    for (let i = 0; i < contexts.length; i++) {
+      const context = contexts[i];
+      const category = context.category;
+      const categoryWatched = qdiiWatched[category];
+      if (!categoryWatched) continue;
+      adapter.ensureQdiiFilterCheckbox(context, qdiiFilterActive[category]);
+      const rows = adapter.qdiiDataRows(context.table);
+      for (let j = 0; j < rows.length; j++) {
+        const hook = adapter.ensureQdiiButton(rows[j], category);
+        if (hook) adapter.applyState(hook, categoryWatched.has(hook.code));
+      }
+      adapter.applyLocalFilter(
+        context.table,
+        categoryWatched,
+        qdiiFilterActive[category],
+        { kind: 'qdii', category: category }
+      );
+    }
+    return contexts.length;
+  }
+
+  function scan() {
+    return { cb: scanCb(), qdii: scanQdii() };
   }
 
   function scheduleScan() {
@@ -47,14 +96,26 @@
   async function onLocalButtonClick(btn) {
     if (btn.dataset.busy) return; // 保存中：临时禁用，避免连续点击重复写入
     const tr = btn.closest('tr');
-    const info = tr && adapter.readRow(tr);
+    const kind = btn.dataset.jdKind || 'cb';
+    const category = btn.dataset.jdCategory;
+    const info = tr && (kind === 'qdii'
+      ? adapter.readQdiiRow(tr, category)
+      : adapter.readRow(tr));
     if (!info) return; // 读不到合法代码或名称：当前行不允许加入
-    const adding = !watched.has(info.code);
+    const activeWatched = kind === 'qdii' ? qdiiWatched[category] : watched;
+    if (!activeWatched) return;
+    const adding = !activeWatched.has(info.code);
     btn.dataset.busy = '1';
     btn.setAttribute('aria-disabled', 'true');
     try {
-      if (adding) await store.add(info.code, info.name);
-      else await store.remove(info.code);
+      if (kind === 'qdii') {
+        if (adding) await qdiiStore.add(category, info.code, info.name);
+        else await qdiiStore.remove(category, info.code);
+      } else if (adding) {
+        await store.add(info.code, info.name);
+      } else {
+        await store.remove(info.code);
+      }
       // 成功后立即刷新本页状态；storage.onChanged 负责其余标签页同步
       await refreshWatched();
       scan();
@@ -85,11 +146,20 @@
     scan();
   });
 
+  document.addEventListener('change', function (ev) {
+    const target = ev.target;
+    if (!target || !target.closest) return;
+    const filterInput = target.closest('input.jd-local-filter');
+    if (!filterInput) return;
+    const category = filterInput.dataset.jdCategory;
+    if (!Object.prototype.hasOwnProperty.call(qdiiFilterActive, category)) return;
+    qdiiFilterActive[category] = filterInput.checked;
+    scan();
+  });
+
   chrome.storage.onChanged.addListener(function (changes, area) {
-    if (area !== 'local' || !changes.localWatchlist) return;
-    const next = changes.localWatchlist.newValue || {};
-    watched = new Set(Object.keys(next));
-    scheduleScan();
+    if (area !== 'local' || (!changes.localWatchlist && !changes.localQdiiWatchlists)) return;
+    refreshWatched().then(scheduleScan);
   });
 
   async function boot() {
@@ -98,8 +168,8 @@
     // 集思录 SPA 品种切换不保证产生可观察的 DOM 事件；低频对账作为最终一致性保障。
     setInterval(scan, 1000);
     await refreshWatched();
-    scan();
-    if (table) console.log('[jisilu-deck] 已在可转债列表注入本地自选按钮');
+    const found = scan();
+    if (found.cb || found.qdii) console.log('[jisilu-deck] 已在目标列表注入本地自选按钮');
   }
 
   if (document.readyState === 'loading') {

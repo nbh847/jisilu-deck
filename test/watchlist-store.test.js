@@ -49,7 +49,8 @@ function createHarness() {
   const ctx = vm.createContext({ chrome });
   vm.runInContext(fs.readFileSync(STORE_SRC, 'utf8'), ctx, { filename: 'watchlist-store.js' });
   const store = ctx.jisiluDeck.createWatchlistStore(api);
-  return { store, data, api };
+  const qdiiStore = ctx.jisiluDeck.createQdiiWatchlistStore(api);
+  return { store, qdiiStore, data, api };
 }
 
 test('add 保存新记录：写入代码、名称，createdAt 为合法 ISO 时间', async () => {
@@ -140,4 +141,34 @@ test('读取失败：has 与 list 均 reject', async () => {
   await assert.rejects(store.has('123284'));
   api.failNextGet = true;
   await assert.rejects(store.list());
+});
+
+test('QDII 三类允许相同代码独立保存，列表只返回指定分类', async () => {
+  const { qdiiStore, data } = createHarness();
+  await qdiiStore.add('europe', '520580', '欧美示例');
+  await qdiiStore.add('commodity', '520580', '商品示例');
+  await qdiiStore.add('asia', '520580', '亚洲示例');
+
+  assert.deepStrictEqual(plain(await qdiiStore.list('europe')).map((item) => item.fundName), ['欧美示例']);
+  assert.deepStrictEqual(plain(await qdiiStore.list('commodity')).map((item) => item.fundName), ['商品示例']);
+  assert.deepStrictEqual(plain(await qdiiStore.list('asia')).map((item) => item.fundName), ['亚洲示例']);
+  assert.deepStrictEqual(Object.keys(plain(data.get('localQdiiWatchlists'))).sort(), ['asia', 'commodity', 'europe']);
+});
+
+test('QDII 移出一个分类不影响其他分类的同代码记录', async () => {
+  const { qdiiStore } = createHarness();
+  await qdiiStore.add('europe', '520580', '欧美示例');
+  await qdiiStore.add('asia', '520580', '亚洲示例');
+  await qdiiStore.remove('europe', '520580');
+
+  assert.strictEqual(await qdiiStore.has('europe', '520580'), false);
+  assert.strictEqual(await qdiiStore.has('asia', '520580'), true);
+});
+
+test('QDII 拒绝未知分类、非法代码和空名称', async () => {
+  const { qdiiStore, data } = createHarness();
+  await assert.rejects(qdiiStore.add('unknown', '520580', '示例'), { code: 'JD_INVALID_INPUT' });
+  await assert.rejects(qdiiStore.add('europe', '52058', '示例'), { code: 'JD_INVALID_INPUT' });
+  await assert.rejects(qdiiStore.add('europe', '520580', '  '), { code: 'JD_INVALID_INPUT' });
+  assert.strictEqual(data.has('localQdiiWatchlists'), false);
 });

@@ -1,11 +1,14 @@
-// 本地自选存储层：唯一数据 bondCode/bondName/createdAt，保存在 chrome.storage.local
-// 数据形态：{ 'localWatchlist': { [bondCode]: { bondName, createdAt } } }
+// 本地自选存储层：只保存代码、名称和加入时间，保存在 chrome.storage.local
+// 可转债：{ 'localWatchlist': { [bondCode]: { bondName, createdAt } } }
+// QDII：{ 'localQdiiWatchlists': { [category]: { [fundCode]: { fundName, createdAt } } } }
 // 经典脚本（manifest content_scripts 按序注入），通过 globalThis.jisiluDeck 暴露；无外部依赖
 (function () {
   'use strict';
 
   const NS = (globalThis.jisiluDeck = globalThis.jisiluDeck || {});
   const STORAGE_KEY = 'localWatchlist';
+  const QDII_STORAGE_KEY = 'localQdiiWatchlists';
+  const QDII_CATEGORIES = ['europe', 'commodity', 'asia'];
 
   function invalidInput(message) {
     const err = new Error(message);
@@ -32,6 +35,13 @@
     const name = rawName.trim();
     if (!name) throw invalidInput('bondName 不能为空');
     return name;
+  }
+
+  function validateQdiiCategory(rawCategory) {
+    if (QDII_CATEGORIES.indexOf(rawCategory) === -1) {
+      throw invalidInput('未知 QDII 分类：' + rawCategory);
+    }
+    return rawCategory;
   }
 
   NS.createWatchlistStore = function (storage) {
@@ -96,6 +106,93 @@
       return Object.keys(map).map((code) => ({
         code,
         bondName: map[code].bondName,
+        createdAt: map[code].createdAt,
+      }));
+    }
+
+    return { add, remove, has, list };
+  };
+
+  NS.createQdiiWatchlistStore = function (storage) {
+    function getRoot() {
+      return new Promise((resolve, reject) => {
+        storage.get(QDII_STORAGE_KEY, (items) => {
+          if (chrome.runtime.lastError) {
+            reject(storageError(chrome.runtime.lastError));
+            return;
+          }
+          const root = items && typeof items[QDII_STORAGE_KEY] === 'object' && items[QDII_STORAGE_KEY] !== null
+            ? items[QDII_STORAGE_KEY]
+            : {};
+          resolve(root);
+        });
+      });
+    }
+
+    function setRoot(root) {
+      return new Promise((resolve, reject) => {
+        storage.set({ [QDII_STORAGE_KEY]: root }, () => {
+          if (chrome.runtime.lastError) {
+            reject(storageError(chrome.runtime.lastError));
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+
+    function categoryMap(root, category) {
+      const value = root[category];
+      return value && typeof value === 'object' ? value : {};
+    }
+
+    async function add(rawCategory, rawCode, rawName) {
+      const category = validateQdiiCategory(rawCategory);
+      const code = validateCode(rawCode);
+      const fundName = validateName(rawName);
+      const root = await getRoot();
+      const current = categoryMap(root, category);
+      if (Object.prototype.hasOwnProperty.call(current, code)) {
+        return {
+          category,
+          code,
+          fundName: current[code].fundName,
+          createdAt: current[code].createdAt,
+          existed: true,
+        };
+      }
+      const record = { fundName, createdAt: new Date().toISOString() };
+      const nextCategory = Object.assign({}, current, { [code]: record });
+      await setRoot(Object.assign({}, root, { [category]: nextCategory }));
+      return { category, code, fundName, createdAt: record.createdAt, existed: false };
+    }
+
+    async function remove(rawCategory, rawCode) {
+      const category = validateQdiiCategory(rawCategory);
+      const code = validateCode(rawCode);
+      const root = await getRoot();
+      const current = categoryMap(root, category);
+      if (!Object.prototype.hasOwnProperty.call(current, code)) return;
+      const nextCategory = Object.assign({}, current);
+      delete nextCategory[code];
+      await setRoot(Object.assign({}, root, { [category]: nextCategory }));
+    }
+
+    async function has(rawCategory, rawCode) {
+      const category = validateQdiiCategory(rawCategory);
+      const code = validateCode(rawCode);
+      const root = await getRoot();
+      return Object.prototype.hasOwnProperty.call(categoryMap(root, category), code);
+    }
+
+    async function list(rawCategory) {
+      const category = validateQdiiCategory(rawCategory);
+      const root = await getRoot();
+      const map = categoryMap(root, category);
+      return Object.keys(map).map((code) => ({
+        category,
+        code,
+        fundName: map[code].fundName,
         createdAt: map[code].createdAt,
       }));
     }

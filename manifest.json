@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "jisilu-deck",
-  "version": "0.2.0",
-  "description": "在集思录可转债列表维护本地自选，并支持仅显示当前站内结果中的本地自选。",
+  "version": "0.3.0",
+  "description": "在集思录可转债与 QDII 列表维护相互隔离的浏览器本地自选。",
   "permissions": ["storage"],
   "content_scripts": [
     {

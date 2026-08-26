@@ -8,28 +8,39 @@ const vm = require('node:vm');
 const MAIN_SRC = path.join(__dirname, '..', 'src', 'content', 'main.js');
 const MANIFEST_PATH = path.join(__dirname, '..', 'manifest.json');
 
-function createHarness(initialTable = { id: 'initial-cb-table' }) {
+function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTables = []) {
   let currentTable = initialTable;
+  let currentQdiiTables = initialQdiiTables;
   const scannedTables = [];
   const observers = [];
   const timers = [];
   const intervals = [];
   const listeners = {};
   const filterStates = [];
+  const qdiiFilterStates = [];
 
   const adapter = {
     findMainTable: () => currentTable,
+    findQdiiTables: () => currentQdiiTables,
     dataRows: (table) => {
       scannedTables.push(table);
       return [{ id: 'row' }];
     },
     ensureButton: () => ({ code: '123456' }),
     ensureFilterButton: () => ({}),
+    qdiiDataRows: (table) => {
+      scannedTables.push(table);
+      return [{ id: 'qdii-row' }];
+    },
+    ensureQdiiButton: (row, category) => ({ code: '520580', category }),
+    ensureQdiiFilterCheckbox: () => ({}),
     applyState: () => {},
     applyLocalFilter: (table, watched, active) => {
-      filterStates.push({ table, active, watched: [...watched] });
+      const target = table.id && table.id.startsWith('qdii') ? qdiiFilterStates : filterStates;
+      target.push({ table, active, watched: [...watched] });
     },
     readRow: () => null,
+    readQdiiRow: () => null,
     showHint: () => {},
   };
   const chrome = {
@@ -67,6 +78,11 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
     },
     jisiluDeck: {
       createWatchlistStore: () => ({ list: async () => [] }),
+      createQdiiWatchlistStore: () => ({
+        list: async () => [],
+        add: async () => {},
+        remove: async () => {},
+      }),
       pageAdapter: adapter,
     },
   });
@@ -76,8 +92,12 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
     observers,
     scannedTables,
     filterStates,
+    qdiiFilterStates,
     setCurrentTable(table) {
       currentTable = table;
+    },
+    setCurrentQdiiTables(tables) {
+      currentQdiiTables = tables;
     },
     runNextTimer() {
       assert.ok(timers.length > 0, '应存在待执行的扫描定时器');
@@ -97,6 +117,18 @@ function createHarness(initialTable = { id: 'initial-cb-table' }) {
         },
         preventDefault() {},
         stopPropagation() {},
+      });
+    },
+    changeQdiiFilter(category, checked) {
+      listeners.change({
+        target: {
+          checked,
+          dataset: { jdCategory: category },
+          closest(selector) {
+            if (selector === 'input.jd-local-filter') return this;
+            return null;
+          },
+        },
       });
     },
   };
@@ -163,4 +195,34 @@ test('Manifest 覆盖可转债入口和统一数据板块 SPA 过渡路径', () 
     'https://www.jisilu.cn/web/data/cb/*',
     'https://www.jisilu.cn/data/*',
   ]);
+});
+
+test('QDII 欧美、商品、亚洲筛选状态分别维护且互不影响', async () => {
+  const europe = { id: 'qdii-europe' };
+  const commodity = { id: 'qdii-commodity' };
+  const asia = { id: 'qdii-asia' };
+  const harness = createHarness(null, [
+    { category: 'europe', table: europe },
+    { category: 'commodity', table: commodity },
+  ]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  harness.changeQdiiFilter('europe', true);
+  const latestEurope = harness.qdiiFilterStates.filter((item) => item.table === europe).at(-1);
+  const latestCommodity = harness.qdiiFilterStates.filter((item) => item.table === commodity).at(-1);
+  assert.strictEqual(latestEurope.active, true);
+  assert.strictEqual(latestCommodity.active, false);
+
+  harness.setCurrentQdiiTables([{ category: 'asia', table: asia }]);
+  harness.runReconcileInterval();
+  assert.strictEqual(harness.qdiiFilterStates.filter((item) => item.table === asia).at(-1).active, false);
+
+  harness.changeQdiiFilter('asia', true);
+  harness.setCurrentQdiiTables([
+    { category: 'europe', table: europe },
+    { category: 'commodity', table: commodity },
+  ]);
+  harness.runReconcileInterval();
+  assert.strictEqual(harness.qdiiFilterStates.filter((item) => item.table === europe).at(-1).active, true);
+  assert.strictEqual(harness.qdiiFilterStates.filter((item) => item.table === commodity).at(-1).active, false);
 });
