@@ -36,6 +36,8 @@
 - 2026-09-07：可转债真实 Chrome E2E 48/48 通过，覆盖待购切换、名称同行布局、双筛选、刷新、排序重渲染、SPA 往返、Agent Window 重建和测试数据恢复；截图为 `/tmp/jd-bsk-e2e.png`。
 - 2026-09-07：两轮调试失败产生的“洪城转债”“严牌转债”测试记录已准确识别并清理，原有“万讯转债”“闻泰转债”本地自选未改动；所有 browser-skill Agent Window 已关闭。
 - 2026-09-07：QDII 真实 Chrome E2E 32/32 通过；确认三张表均无待购入口，欧美与亚洲可用数据完成加入、筛选、刷新和清理，商品表在游客状态无数据行时验证筛选控件和功能边界；截图为 `/tmp/jd-bsk-qdii-e2e.png`，测试数据已恢复。
+- `release/jisilu-deck-v0.4.0.zip` 已生成并校验：包含 6 个必要运行与说明文件，Manifest 版本为 `0.4.0`，包内文件与当前源码一致，SHA-256 为 `09b80572deb4d1ad2bf25070e5209510fd7465fa9aecd131a3ad5b05e6c136dc`。
+- `release/jisilu-deck-v0.4.0-release-notes.md` 已生成，Release Title 为 `jisilu-deck v0.4.0`；GitHub tag、Release 与附件尚未创建或上传。
 - `0.2.0` 单元测试基线：`node --test`，20/20 通过。
 - `0.3.0` 单元测试：`node --test`，28/28 通过。
 - QDII 真实页面 E2E：`node tools/e2e-qdii.js`，30/30 通过；测试数据已恢复，截图为 `/tmp/jd-bsk-qdii-e2e.png`，Agent Window 已关闭。
