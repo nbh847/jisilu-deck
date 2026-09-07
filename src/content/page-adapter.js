@@ -8,11 +8,14 @@
 
   const PLUS_COLOR = '#e67e22'; // 本地 +（ui-spec.md §2）
   const RED_COLOR = '#dd1817';  // 复用原站 - 的红色；已选名称与本地 - 同色（ui-spec.md §2/§3）
+  const PURCHASE_IDLE_COLOR = '#909399';
   const PLUS_ICON = '\ue61e';   // 原站 jisilu-iconfont 的 +
   const MINUS_ICON = '\ue61d';  // 原站 jisilu-iconfont 的 -
   const BTN_CLASS = 'jd-local-btn';
   const HINT_CLASS = 'jd-local-hint';
   const FILTER_BTN_CLASS = 'jd-local-filter';
+  const FILTER_GROUP_CLASS = 'jd-local-filter-group';
+  const PURCHASE_BTN_CLASS = 'jd-purchase-btn';
   const FILTER_HIDDEN_CLASS = 'jd-local-filter-hidden';
   const FILTER_EMPTY_CLASS = 'jd-local-filter-empty';
   const FILTER_STYLE_ID = 'jd-local-filter-style';
@@ -88,8 +91,8 @@
       return out;
     },
 
-    // 顶部筛选按钮独立挂在原站按钮组之后，不进入 Vue 管理的按钮组内部
-    ensureFilterButton(active) {
+    // 插件自有筛选组独立挂在原站按钮组之后，不进入 Vue 管理的按钮组内部。
+    ensureFilterGroup(activeMode) {
       const groups = document.querySelectorAll('.table-top .table-bar .el-checkbox-group.attention');
       let group = null;
       for (let i = 0; i < groups.length; i++) {
@@ -102,21 +105,42 @@
       if (!group || !group.parentElement) return null;
 
       const bar = group.parentElement;
-      let btn = bar.querySelector(':scope > button.' + FILTER_BTN_CLASS);
-      if (!btn) {
-        btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = FILTER_BTN_CLASS;
-        btn.textContent = '仅看本地自选';
-        btn.style.cssText = 'box-sizing:border-box;margin-left:8px;padding:7px 15px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;color:#606266;font-family:inherit;font-size:12px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;outline:0;transition:background-color .15s,border-color .15s,color .15s;';
-        bar.insertBefore(btn, group.nextSibling);
+      let localGroup = bar.querySelector(':scope > .' + FILTER_GROUP_CLASS);
+      if (!localGroup) {
+        localGroup = document.createElement('div');
+        localGroup.className = FILTER_GROUP_CLASS;
+        localGroup.setAttribute('role', 'group');
+        localGroup.setAttribute('aria-label', '本地清单筛选');
+        localGroup.style.cssText = 'display:inline-flex;margin-left:8px;vertical-align:middle;';
+        const configs = [
+          { mode: 'watchlist', text: '仅看本地自选' },
+          { mode: 'pending', text: '仅看待购' },
+        ];
+        for (let i = 0; i < configs.length; i++) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = FILTER_BTN_CLASS;
+          setAttr(btn, 'data-jd-filter-mode', configs[i].mode);
+          btn.textContent = configs[i].text;
+          btn.style.cssText = 'box-sizing:border-box;padding:7px 15px;border:1px solid #dcdfe6;border-radius:'
+            + (i === 0 ? '4px 0 0 4px' : '0 4px 4px 0')
+            + ';background:#fff;color:#606266;font-family:inherit;font-size:12px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;outline:0;transition:background-color .15s,border-color .15s,color .15s;';
+          if (i > 0) btn.style.marginLeft = '-1px';
+          localGroup.appendChild(btn);
+        }
+        bar.insertBefore(localGroup, group.nextSibling);
       }
-      setAttr(btn, 'aria-label', '仅看本地自选');
-      setAttr(btn, 'aria-pressed', active ? 'true' : 'false');
-      setStyle(btn, 'backgroundColor', active ? PLUS_COLOR : '#fff');
-      setStyle(btn, 'borderColor', active ? PLUS_COLOR : '#dcdfe6');
-      setStyle(btn, 'color', active ? '#fff' : '#606266');
-      return btn;
+      const buttons = localGroup.querySelectorAll('button.' + FILTER_BTN_CLASS);
+      for (let i = 0; i < buttons.length; i++) {
+        const active = buttons[i].getAttribute('data-jd-filter-mode') === activeMode;
+        setAttr(buttons[i], 'aria-label', buttons[i].textContent);
+        setAttr(buttons[i], 'aria-pressed', active ? 'true' : 'false');
+        setStyle(buttons[i], 'backgroundColor', active ? PLUS_COLOR : '#fff');
+        setStyle(buttons[i], 'borderColor', active ? PLUS_COLOR : '#dcdfe6');
+        setStyle(buttons[i], 'color', active ? '#fff' : '#606266');
+        setStyle(buttons[i], 'zIndex', active ? '1' : '');
+      }
+      return localGroup;
     },
 
     ensureQdiiFilterCheckbox(context, active) {
@@ -130,12 +154,12 @@
       if (!label) {
         label = document.createElement('label');
         label.className = FILTER_BTN_CLASS + '-label';
-        label.dataset.jdCategory = category;
+        setAttr(label, 'data-jd-category', category);
         label.style.cssText = 'display:inline;margin-left:8px;';
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.className = FILTER_BTN_CLASS;
-        input.dataset.jdCategory = category;
+        setAttr(input, 'data-jd-category', category);
         input.setAttribute('aria-label', '仅看本地自选');
         label.appendChild(input);
         label.appendChild(document.createTextNode('仅看本地自选'));
@@ -160,7 +184,7 @@
       const code = (codeLink.textContent || '').trim();
       const name = (nameSpan.textContent || '').trim();
       if (!/^\d{6}$/.test(code) || !name) return null;
-      return { code: code, name: name, opCell: tr.children[1], nameSpan: nameSpan };
+      return { code: code, name: name, opCell: tr.children[1], nameCell: nameCell, nameSpan: nameSpan };
     },
 
     readQdiiRow(tr, category) {
@@ -185,7 +209,7 @@
       if (!btn) {
         btn = document.createElement('a');
         btn.className = BTN_CLASS;
-        btn.dataset.jdKind = 'cb';
+        setAttr(btn, 'data-jd-kind', 'cb');
         btn.setAttribute('role', 'button');
         btn.setAttribute('tabindex', '0');
         // 操作格 position:sticky 已定位，子元素绝对定位不参与表格布局：不扩列宽、不覆盖原按钮
@@ -211,8 +235,8 @@
       if (!btn) {
         btn = document.createElement('a');
         btn.className = BTN_CLASS;
-        btn.dataset.jdKind = 'qdii';
-        btn.dataset.jdCategory = category;
+        setAttr(btn, 'data-jd-kind', 'qdii');
+        setAttr(btn, 'data-jd-category', category);
         btn.setAttribute('role', 'button');
         btn.setAttribute('tabindex', '0');
         btn.style.cssText = 'display:inline-block;margin-left:6px;width:13px;height:13px;line-height:13px;font-size:13px;text-align:center;text-decoration:none;vertical-align:middle;cursor:pointer;user-select:none;';
@@ -237,6 +261,45 @@
         nameSpan: info.nameSpan,
         kind: 'qdii',
       };
+    },
+
+    // 待购入口只出现在本地自选行的转债名称旁；非本地自选行清理已有入口。
+    ensurePurchaseButton(tr, watched) {
+      const info = this.readRow(tr);
+      if (!info || !info.nameCell) return null;
+      let btn = info.nameCell.querySelector(':scope > a.' + PURCHASE_BTN_CLASS);
+      if (!watched) {
+        if (btn) btn.remove();
+        return null;
+      }
+      if (!btn) {
+        btn = document.createElement('a');
+        btn.className = PURCHASE_BTN_CLASS;
+        setAttr(btn, 'data-jd-kind', 'purchase');
+        btn.setAttribute('role', 'button');
+        btn.setAttribute('tabindex', '0');
+        btn.style.cssText = 'display:inline-block;margin-left:2px;padding:0;border-radius:2px;font-size:10px;line-height:14px;text-decoration:none;vertical-align:baseline;cursor:pointer;user-select:none;white-space:nowrap;';
+        // 页面可能在名称后追加条款状态图标；待购入口必须紧跟名称，不能 append 到图标之后被挤到下一行。
+        info.nameCell.insertBefore(btn, info.nameSpan.nextSibling);
+      }
+      return { code: info.code, name: info.name, btn: btn };
+    },
+
+    applyPurchaseState(hook, pending) {
+      if (pending) {
+        setText(hook.btn, '待购');
+        setStyle(hook.btn, 'color', PLUS_COLOR);
+        setStyle(hook.btn, 'fontWeight', '500');
+        setAttr(hook.btn, 'title', '清除[' + hook.name + ']的待购状态');
+        setAttr(hook.btn, 'aria-label', '清除待购');
+      } else {
+        setText(hook.btn, '+');
+        setStyle(hook.btn, 'color', PURCHASE_IDLE_COLOR);
+        setStyle(hook.btn, 'fontWeight', '400');
+        setAttr(hook.btn, 'title', '标记[' + hook.name + ']为待购');
+        setAttr(hook.btn, 'aria-label', '标记为待购');
+      }
+      setAttr(hook.btn, 'aria-pressed', pending ? 'true' : 'false');
     },
 
     // 按本地选中状态切换按钮与名称样式
@@ -283,11 +346,11 @@
         if (!empty) {
           empty = document.createElement('div');
           empty.className = FILTER_EMPTY_CLASS;
-          empty.dataset.jdCategory = emptyKey;
-          empty.textContent = '当前筛选条件下暂无本地自选';
+          setAttr(empty, 'data-jd-category', emptyKey);
           empty.style.cssText = 'padding:24px 0;text-align:center;font-size:14px;color:#909399;';
           container.appendChild(empty);
         }
+        setText(empty, config.emptyText || '当前筛选条件下暂无本地自选');
         empty.hidden = !(active && visibleCount === 0);
       }
       return visibleCount;

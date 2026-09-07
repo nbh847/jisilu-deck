@@ -14,7 +14,8 @@
   const adapter = NS.pageAdapter;
   let table = null;
   let watched = new Set();
-  let localFilterActive = false;
+  let pending = new Set();
+  let localFilterMode = null;
   const qdiiWatched = {
     europe: new Set(),
     commodity: new Set(),
@@ -31,9 +32,12 @@
     try {
       const records = await store.list();
       watched = new Set(records.map(function (r) { return r.code; }));
+      const pendingRecords = await store.listPending();
+      pending = new Set(pendingRecords.map(function (r) { return r.code; }));
     } catch (e) {
       // 读取失败：按空处理（按钮全为 +）；实际点击写入失败时按钮附近会给出失败提示
       watched = new Set();
+      pending = new Set();
     }
     const categories = Object.keys(qdiiWatched);
     for (let i = 0; i < categories.length; i++) {
@@ -51,13 +55,20 @@
     // SPA 分类切换可能会把旧表格留在 DOM 中；每轮都以当前可见目标表格为准。
     table = adapter.findMainTable();
     if (!table) return false;
-    adapter.ensureFilterButton(localFilterActive);
+    adapter.ensureFilterGroup(localFilterMode);
     const rows = adapter.dataRows(table);
     for (let i = 0; i < rows.length; i++) {
       const hook = adapter.ensureButton(rows[i]);
       if (hook) adapter.applyState(hook, watched.has(hook.code));
+      const purchaseHook = adapter.ensurePurchaseButton(rows[i], hook && watched.has(hook.code));
+      if (purchaseHook) adapter.applyPurchaseState(purchaseHook, pending.has(purchaseHook.code));
     }
-    adapter.applyLocalFilter(table, watched, localFilterActive);
+    const filtered = localFilterMode === 'pending' ? pending : watched;
+    adapter.applyLocalFilter(table, filtered, localFilterMode !== null, {
+      emptyText: localFilterMode === 'pending'
+        ? '当前筛选条件下暂无待购可转债'
+        : '当前筛选条件下暂无本地自选',
+    });
     return true;
   }
 
@@ -94,10 +105,10 @@
   }
 
   async function onLocalButtonClick(btn) {
-    if (btn.dataset.busy) return; // 保存中：临时禁用，避免连续点击重复写入
+    if (btn.hasAttribute('data-jd-busy')) return; // 保存中：临时禁用，避免连续点击重复写入
     const tr = btn.closest('tr');
-    const kind = btn.dataset.jdKind || 'cb';
-    const category = btn.dataset.jdCategory;
+    const kind = btn.getAttribute('data-jd-kind') || 'cb';
+    const category = btn.getAttribute('data-jd-category');
     const info = tr && (kind === 'qdii'
       ? adapter.readQdiiRow(tr, category)
       : adapter.readRow(tr));
@@ -105,7 +116,7 @@
     const activeWatched = kind === 'qdii' ? qdiiWatched[category] : watched;
     if (!activeWatched) return;
     const adding = !activeWatched.has(info.code);
-    btn.dataset.busy = '1';
+    btn.setAttribute('data-jd-busy', '1');
     btn.setAttribute('aria-disabled', 'true');
     try {
       if (kind === 'qdii') {
@@ -123,7 +134,28 @@
       // 保存/删除失败：保持原状态（+ 或 -），仅局部提示（data-rules.md §2）
       adapter.showHint(btn, adding ? '加入本地自选失败' : '移出本地自选失败');
     } finally {
-      delete btn.dataset.busy;
+      btn.removeAttribute('data-jd-busy');
+      btn.removeAttribute('aria-disabled');
+    }
+  }
+
+  async function onPurchaseButtonClick(btn) {
+    if (btn.hasAttribute('data-jd-busy')) return;
+    const tr = btn.closest('tr');
+    const info = tr && adapter.readRow(tr);
+    if (!info || !watched.has(info.code)) return;
+    const adding = !pending.has(info.code);
+    btn.setAttribute('data-jd-busy', '1');
+    btn.setAttribute('aria-disabled', 'true');
+    try {
+      if (adding) await store.addPending(info.code);
+      else await store.removePending(info.code);
+      await refreshWatched();
+      scan();
+    } catch (e) {
+      adapter.showHint(btn, adding ? '标记待购失败' : '清除待购失败');
+    } finally {
+      btn.removeAttribute('data-jd-busy');
       btn.removeAttribute('aria-disabled');
     }
   }
@@ -131,6 +163,13 @@
   document.addEventListener('click', function (ev) {
     const target = ev.target;
     if (!target || !target.closest) return;
+    const purchaseBtn = target.closest('a.jd-purchase-btn');
+    if (purchaseBtn) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onPurchaseButtonClick(purchaseBtn);
+      return;
+    }
     const btn = target.closest('a.jd-local-btn');
     if (btn) {
       ev.preventDefault();
@@ -142,7 +181,9 @@
     if (!filterBtn) return;
     ev.preventDefault();
     ev.stopPropagation();
-    localFilterActive = !localFilterActive;
+    const mode = filterBtn.getAttribute('data-jd-filter-mode');
+    if (mode !== 'watchlist' && mode !== 'pending') return;
+    localFilterMode = localFilterMode === mode ? null : mode;
     scan();
   });
 
@@ -151,14 +192,14 @@
     if (!target || !target.closest) return;
     const filterInput = target.closest('input.jd-local-filter');
     if (!filterInput) return;
-    const category = filterInput.dataset.jdCategory;
+    const category = filterInput.getAttribute('data-jd-category');
     if (!Object.prototype.hasOwnProperty.call(qdiiFilterActive, category)) return;
     qdiiFilterActive[category] = filterInput.checked;
     scan();
   });
 
   chrome.storage.onChanged.addListener(function (changes, area) {
-    if (area !== 'local' || (!changes.localWatchlist && !changes.localQdiiWatchlists)) return;
+    if (area !== 'local' || (!changes.localWatchlist && !changes.localPurchaseQueue && !changes.localQdiiWatchlists)) return;
     refreshWatched().then(scheduleScan);
   });
 

@@ -1,5 +1,6 @@
-// 本地自选存储层：只保存代码、名称和加入时间，保存在 chrome.storage.local
+// 本地自选与待购状态存储层，保存在 chrome.storage.local
 // 可转债：{ 'localWatchlist': { [bondCode]: { bondName, createdAt } } }
+// 待购：{ 'localPurchaseQueue': { [bondCode]: { createdAt } } }，且 code 必须存在于 localWatchlist
 // QDII：{ 'localQdiiWatchlists': { [category]: { [fundCode]: { fundName, createdAt } } } }
 // 经典脚本（manifest content_scripts 按序注入），通过 globalThis.jisiluDeck 暴露；无外部依赖
 (function () {
@@ -7,6 +8,7 @@
 
   const NS = (globalThis.jisiluDeck = globalThis.jisiluDeck || {});
   const STORAGE_KEY = 'localWatchlist';
+  const PURCHASE_QUEUE_KEY = 'localPurchaseQueue';
   const QDII_STORAGE_KEY = 'localQdiiWatchlists';
   const QDII_CATEGORIES = ['europe', 'commodity', 'asia'];
 
@@ -45,24 +47,27 @@
   }
 
   NS.createWatchlistStore = function (storage) {
-    function getMap() {
+    function getState() {
       return new Promise((resolve, reject) => {
-        storage.get(STORAGE_KEY, (items) => {
+        storage.get([STORAGE_KEY, PURCHASE_QUEUE_KEY], (items) => {
           if (chrome.runtime.lastError) {
             reject(storageError(chrome.runtime.lastError));
             return;
           }
-          const map = items && typeof items[STORAGE_KEY] === 'object' && items[STORAGE_KEY] !== null
+          const watchlist = items && typeof items[STORAGE_KEY] === 'object' && items[STORAGE_KEY] !== null
             ? items[STORAGE_KEY]
             : {};
-          resolve(map);
+          const purchaseQueue = items && typeof items[PURCHASE_QUEUE_KEY] === 'object' && items[PURCHASE_QUEUE_KEY] !== null
+            ? items[PURCHASE_QUEUE_KEY]
+            : {};
+          resolve({ watchlist, purchaseQueue });
         });
       });
     }
 
-    function setMap(map) {
+    function setState(items) {
       return new Promise((resolve, reject) => {
-        storage.set({ [STORAGE_KEY]: map }, () => {
+        storage.set(items, () => {
           if (chrome.runtime.lastError) {
             reject(storageError(chrome.runtime.lastError));
             return;
@@ -76,33 +81,40 @@
     async function add(rawCode, rawName) {
       const code = validateCode(rawCode);
       const bondName = validateName(rawName);
-      const map = await getMap();
+      const map = (await getState()).watchlist;
       if (Object.prototype.hasOwnProperty.call(map, code)) {
         return { code, bondName: map[code].bondName, createdAt: map[code].createdAt, existed: true };
       }
       const record = { bondName, createdAt: new Date().toISOString() };
-      await setMap(Object.assign({}, map, { [code]: record }));
+      await setState({ [STORAGE_KEY]: Object.assign({}, map, { [code]: record }) });
       return { code, bondName: record.bondName, createdAt: record.createdAt, existed: false };
     }
 
-    // 移出自选：不存在的 code 幂等成功（不动存储），存储失败才 reject
+    // 移出自选时在同一次 storage.set 中级联清除待购，避免产生孤立记录。
     async function remove(rawCode) {
       const code = validateCode(rawCode);
-      const map = await getMap();
-      if (!Object.prototype.hasOwnProperty.call(map, code)) return;
-      const next = Object.assign({}, map);
-      delete next[code];
-      await setMap(next);
+      const state = await getState();
+      const watched = Object.prototype.hasOwnProperty.call(state.watchlist, code);
+      const pending = Object.prototype.hasOwnProperty.call(state.purchaseQueue, code);
+      if (!watched && !pending) return;
+      const nextWatchlist = Object.assign({}, state.watchlist);
+      const nextPurchaseQueue = Object.assign({}, state.purchaseQueue);
+      delete nextWatchlist[code];
+      delete nextPurchaseQueue[code];
+      await setState({
+        [STORAGE_KEY]: nextWatchlist,
+        [PURCHASE_QUEUE_KEY]: nextPurchaseQueue,
+      });
     }
 
     async function has(rawCode) {
       const code = validateCode(rawCode);
-      const map = await getMap();
+      const map = (await getState()).watchlist;
       return Object.prototype.hasOwnProperty.call(map, code);
     }
 
     async function list() {
-      const map = await getMap();
+      const map = (await getState()).watchlist;
       return Object.keys(map).map((code) => ({
         code,
         bondName: map[code].bondName,
@@ -110,7 +122,39 @@
       }));
     }
 
-    return { add, remove, has, list };
+    async function addPending(rawCode) {
+      const code = validateCode(rawCode);
+      const state = await getState();
+      if (!Object.prototype.hasOwnProperty.call(state.watchlist, code)) {
+        throw invalidInput('只有本地自选可标记为待购：' + code);
+      }
+      if (Object.prototype.hasOwnProperty.call(state.purchaseQueue, code)) {
+        return { code, createdAt: state.purchaseQueue[code].createdAt, existed: true };
+      }
+      const record = { createdAt: new Date().toISOString() };
+      await setState({
+        [PURCHASE_QUEUE_KEY]: Object.assign({}, state.purchaseQueue, { [code]: record }),
+      });
+      return { code, createdAt: record.createdAt, existed: false };
+    }
+
+    async function removePending(rawCode) {
+      const code = validateCode(rawCode);
+      const state = await getState();
+      if (!Object.prototype.hasOwnProperty.call(state.purchaseQueue, code)) return;
+      const next = Object.assign({}, state.purchaseQueue);
+      delete next[code];
+      await setState({ [PURCHASE_QUEUE_KEY]: next });
+    }
+
+    async function listPending() {
+      const state = await getState();
+      return Object.keys(state.purchaseQueue)
+        .filter((code) => Object.prototype.hasOwnProperty.call(state.watchlist, code))
+        .map((code) => ({ code, createdAt: state.purchaseQueue[code].createdAt }));
+    }
+
+    return { add, remove, has, list, addPending, removePending, listPending };
   };
 
   NS.createQdiiWatchlistStore = function (storage) {

@@ -31,9 +31,11 @@ function createHarness() {
       chrome.runtime.lastError = { message: 'mock: storage get failed' };
       return finish(cb);
     }
-    const key = typeof keys === 'string' ? keys : keys[0];
     const out = {};
-    if (data.has(key)) out[key] = data.get(key);
+    const requested = typeof keys === 'string' ? [keys] : keys;
+    for (const key of requested) {
+      if (data.has(key)) out[key] = data.get(key);
+    }
     finish(() => cb(out));
   };
   api.set = (items, cb) => {
@@ -141,6 +143,47 @@ test('读取失败：has 与 list 均 reject', async () => {
   await assert.rejects(store.has('123284'));
   api.failNextGet = true;
   await assert.rejects(store.list());
+});
+
+test('待购只允许本地自选，加入幂等且可单独清除', async () => {
+  const { store, data } = createHarness();
+  await assert.rejects(store.addPending('123284'), { code: 'JD_INVALID_INPUT' });
+
+  await store.add('123284', '示例转债');
+  const first = await store.addPending('123284');
+  const second = await store.addPending('123284');
+  assert.strictEqual(first.existed, false);
+  assert.strictEqual(second.existed, true);
+  assert.strictEqual(second.createdAt, first.createdAt);
+  assert.deepStrictEqual(plain(data.get('localPurchaseQueue')), {
+    123284: { createdAt: first.createdAt },
+  });
+  assert.deepStrictEqual(plain(await store.listPending()), [{ code: '123284', createdAt: first.createdAt }]);
+
+  await store.removePending('123284');
+  assert.deepStrictEqual(plain(await store.listPending()), []);
+  assert.strictEqual(await store.has('123284'), true, '清除待购不得移出本地自选');
+});
+
+test('移出本地自选在一次写入中级联清除待购', async () => {
+  const { store, data } = createHarness();
+  await store.add('123284', '示例转债');
+  await store.addPending('123284');
+  await store.remove('123284');
+  assert.deepStrictEqual(plain(data.get('localWatchlist')), {});
+  assert.deepStrictEqual(plain(data.get('localPurchaseQueue')), {});
+});
+
+test('级联清除写入失败时本地自选和待购均保持原状', async () => {
+  const { store, data, api } = createHarness();
+  await store.add('123284', '示例转债');
+  await store.addPending('123284');
+  const beforeWatchlist = plain(data.get('localWatchlist'));
+  const beforeQueue = plain(data.get('localPurchaseQueue'));
+  api.failNextSet = true;
+  await assert.rejects(store.remove('123284'), { code: 'JD_STORAGE_ERROR' });
+  assert.deepStrictEqual(plain(data.get('localWatchlist')), beforeWatchlist);
+  assert.deepStrictEqual(plain(data.get('localPurchaseQueue')), beforeQueue);
 });
 
 test('QDII 三类允许相同代码独立保存，列表只返回指定分类', async () => {

@@ -57,7 +57,7 @@ test('findMainTable 在只有封闭基金表时返回 null', () => {
   assert.strictEqual(adapter.findMainTable(), null);
 });
 
-test('ensureFilterButton 在原站自选组之后注入独立按钮并同步状态', () => {
+test('ensureFilterGroup 在原站筛选组之后注入插件双按钮组并同步互斥状态', () => {
   let inserted = null;
   const showBlocked = { id: 'show-blocked' };
   const group = {
@@ -72,26 +72,100 @@ test('ensureFilterButton 在原站自选组之后注入独立按钮并同步状�
     },
   };
   group.parentElement = bar;
-  const document = {
-    querySelectorAll: () => [group],
-    createElement: () => ({
+  function element(tag) {
+    return {
+      tagName: tag.toUpperCase(),
+      className: '',
+      textContent: '',
+      dataset: {},
       style: {},
       attributes: {},
+      children: [],
+      appendChild(child) { this.children.push(child); },
+      querySelectorAll(selector) {
+        if (selector === 'button.jd-local-filter') {
+          return this.children.filter((child) => child.tagName === 'BUTTON' && child.className === 'jd-local-filter');
+        }
+        return [];
+      },
       getAttribute(name) { return this.attributes[name] ?? null; },
       setAttribute(name, value) { this.attributes[name] = value; },
-    }),
+    };
+  }
+  const document = {
+    querySelectorAll: () => [group],
+    createElement: element,
   };
   const adapter = loadAdapterWithDocument(document);
 
-  const button = adapter.ensureFilterButton(false);
-  assert.strictEqual(button.textContent, '仅看本地自选');
-  assert.strictEqual(button.attributes['aria-pressed'], 'false');
-  assert.match(button.style.cssText, /margin-left:8px/);
+  const localGroup = adapter.ensureFilterGroup(null);
+  assert.strictEqual(localGroup.children.length, 2);
+  assert.deepStrictEqual(localGroup.children.map((btn) => btn.textContent), ['仅看本地自选', '仅看待购']);
+  assert.deepStrictEqual(localGroup.children.map((btn) => btn.attributes['aria-pressed']), ['false', 'false']);
+  assert.match(localGroup.style.cssText, /margin-left:8px/);
 
-  assert.strictEqual(adapter.ensureFilterButton(true), button, '重复扫描应复用同一按钮');
-  assert.strictEqual(button.attributes['aria-pressed'], 'true');
-  assert.strictEqual(button.style.backgroundColor, '#e67e22');
-  assert.strictEqual(button.style.color, '#fff');
+  assert.strictEqual(adapter.ensureFilterGroup('pending'), localGroup, '重复扫描应复用同一筛选组');
+  assert.deepStrictEqual(localGroup.children.map((btn) => btn.attributes['aria-pressed']), ['false', 'true']);
+  assert.strictEqual(localGroup.children[1].style.backgroundColor, '#e67e22');
+  assert.strictEqual(localGroup.children[1].style.color, '#fff');
+});
+
+test('ensurePurchaseButton 只为本地自选行注入名称旁待购入口并切换状态', () => {
+  function element(tag) {
+    return {
+      tagName: tag.toUpperCase(),
+      className: '',
+      textContent: '',
+      dataset: {},
+      style: {},
+      attributes: {},
+      parentElement: null,
+      setAttribute(name, value) { this.attributes[name] = value; },
+      getAttribute(name) { return this.attributes[name] ?? null; },
+      remove() {
+        if (!this.parentElement) return;
+        this.parentElement.children = this.parentElement.children.filter((item) => item !== this);
+        this.parentElement = null;
+      },
+    };
+  }
+  const nameSpan = { textContent: '示例转债', style: {} };
+  const nameCell = {
+    children: [nameSpan],
+    querySelector(selector) {
+      if (selector === 'span') return nameSpan;
+      if (selector === ':scope > a.jd-purchase-btn') {
+        return this.children.find((child) => child.className === 'jd-purchase-btn') || null;
+      }
+      return null;
+    },
+    insertBefore(child, before) {
+      child.parentElement = this;
+      const index = before ? this.children.indexOf(before) : -1;
+      if (index === -1) this.children.push(child);
+      else this.children.splice(index, 0, child);
+    },
+  };
+  const codeCell = {
+    querySelector: () => ({ textContent: '123284' }),
+  };
+  const row = { children: [{}, {}, codeCell, nameCell] };
+  const adapter = loadAdapterWithDocument({ createElement: element });
+
+  const hook = adapter.ensurePurchaseButton(row, true);
+  adapter.applyPurchaseState(hook, false);
+  assert.strictEqual(hook.btn.textContent, '+');
+  assert.strictEqual(hook.btn.style.color, '#909399');
+  assert.strictEqual(hook.btn.attributes['aria-pressed'], 'false');
+
+  adapter.applyPurchaseState(hook, true);
+  assert.strictEqual(hook.btn.textContent, '待购');
+  assert.strictEqual(hook.btn.style.color, '#e67e22');
+  assert.strictEqual(hook.btn.attributes['aria-pressed'], 'true');
+  assert.strictEqual(adapter.ensurePurchaseButton(row, true).btn, hook.btn, '重复扫描不得重复注入');
+
+  assert.strictEqual(adapter.ensurePurchaseButton(row, false), null);
+  assert.strictEqual(nameCell.children.includes(hook.btn), false, '移出本地自选后应清理待购入口');
 });
 
 test('applyLocalFilter 只保留本地自选行，关闭后恢复并维护空状态', () => {
@@ -114,9 +188,15 @@ test('applyLocalFilter 只保留本地自选行，关闭后恢复并维护空状
   const document = {
     getElementById: () => ({}),
     createElement() {
-      const dataset = {};
-      const node = { style: {} };
-      Object.defineProperty(node, 'dataset', { get: () => dataset });
+      const node = {
+        style: {},
+        attributes: {},
+        getAttribute(name) { return this.attributes[name] ?? null; },
+        setAttribute(name, value) { this.attributes[name] = value; },
+      };
+      Object.defineProperty(node, 'dataset', {
+        get() { throw new TypeError('dataset getter must not be used for empty-state writes'); },
+      });
       return node;
     },
   };
@@ -133,6 +213,9 @@ test('applyLocalFilter 只保留本地自选行，关闭后恢复并维护空状
   assert.strictEqual(adapter.applyLocalFilter(table, new Set(), true), 0);
   assert.strictEqual(empty.hidden, false);
   assert.strictEqual(empty.textContent, '当前筛选条件下暂无本地自选');
+
+  adapter.applyLocalFilter(table, new Set(), true, { emptyText: '当前筛选条件下暂无待购可转债' });
+  assert.strictEqual(empty.textContent, '当前筛选条件下暂无待购可转债');
 
   assert.strictEqual(adapter.applyLocalFilter(table, new Set(), false), 2);
   assert.strictEqual(rows.every((item) => !item.classList.contains('jd-local-filter-hidden')), true);
@@ -184,7 +267,7 @@ test('QDII 站内自选重写操作格为 delOwnedQd 后重新注入本地按钮
     }
     if (selector.includes('a.jd-local-btn')) {
       return this.children.find((child) => child.className === 'jd-local-btn'
-        && child.dataset.jdKind === 'qdii') || null;
+        && child.getAttribute('data-jd-kind') === 'qdii') || null;
     }
     return null;
   };
@@ -248,6 +331,7 @@ test('ensureQdiiFilterCheckbox 紧邻站内仅看自选右侧并保持三类状�
         children: [],
         appendChild(child) { this.children.push(child); },
         setAttribute(name, value) { this.attributes[name] = value; },
+        getAttribute(name) { return this.attributes[name] ?? null; },
       };
       created.push(node);
       return node;
@@ -261,8 +345,8 @@ test('ensureQdiiFilterCheckbox 紧邻站内仅看自选右侧并保持三类状�
   const europeInput = adapter.ensureQdiiFilterCheckbox({ category: 'europe', table: europe.table }, true);
   const asiaInput = adapter.ensureQdiiFilterCheckbox({ category: 'asia', table: asia.table }, false);
 
-  assert.strictEqual(europe.inserted.dataset.jdCategory, 'europe');
-  assert.strictEqual(asia.inserted.dataset.jdCategory, 'asia');
+  assert.strictEqual(europe.inserted.attributes['data-jd-category'], 'europe');
+  assert.strictEqual(asia.inserted.attributes['data-jd-category'], 'asia');
   assert.strictEqual(europeInput.checked, true);
   assert.strictEqual(asiaInput.checked, false);
   assert.strictEqual(europeInput.className, 'jd-local-filter');
@@ -287,7 +371,18 @@ test('applyLocalFilter 在 QDII 模式只按当前分类记录筛选', () => {
   };
   const document = {
     getElementById: () => ({}),
-    createElement: () => ({ style: {}, dataset: {} }),
+    createElement() {
+      const node = {
+        style: {},
+        attributes: {},
+        getAttribute(name) { return this.attributes[name] ?? null; },
+        setAttribute(name, value) { this.attributes[name] = value; },
+      };
+      Object.defineProperty(node, 'dataset', {
+        get() { throw new TypeError('dataset getter must not be used for empty-state writes'); },
+      });
+      return node;
+    },
   };
   const adapter = loadAdapterWithDocument(document);
   adapter.qdiiDataRows = () => rows;

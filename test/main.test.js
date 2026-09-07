@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const MAIN_SRC = path.join(__dirname, '..', 'src', 'content', 'main.js');
 const MANIFEST_PATH = path.join(__dirname, '..', 'manifest.json');
 
-function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTables = []) {
+function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTables = [], initialWatchlist = [], initialPending = []) {
   let currentTable = initialTable;
   let currentQdiiTables = initialQdiiTables;
   const scannedTables = [];
@@ -18,16 +18,29 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
   const listeners = {};
   const filterStates = [];
   const qdiiFilterStates = [];
+  const watchedCodes = new Set(initialWatchlist);
+  const pendingCodes = new Set(initialPending);
+  const purchaseCalls = [];
+  const row = { id: 'row' };
+  const purchaseButton = {
+    attributes: {},
+    closest(selector) { return selector === 'tr' ? row : null; },
+    hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name); },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    removeAttribute(name) { delete this.attributes[name]; },
+  };
 
   const adapter = {
     findMainTable: () => currentTable,
     findQdiiTables: () => currentQdiiTables,
     dataRows: (table) => {
       scannedTables.push(table);
-      return [{ id: 'row' }];
+      return [row];
     },
     ensureButton: () => ({ code: '123456' }),
-    ensureFilterButton: () => ({}),
+    ensureFilterGroup: () => ({}),
+    ensurePurchaseButton: () => ({ code: '123456', name: '示例转债', btn: purchaseButton }),
     qdiiDataRows: (table) => {
       scannedTables.push(table);
       return [{ id: 'qdii-row' }];
@@ -35,11 +48,12 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
     ensureQdiiButton: (row, category) => ({ code: '520580', category }),
     ensureQdiiFilterCheckbox: () => ({}),
     applyState: () => {},
-    applyLocalFilter: (table, watched, active) => {
+    applyPurchaseState: () => {},
+    applyLocalFilter: (table, watched, active, options) => {
       const target = table.id && table.id.startsWith('qdii') ? qdiiFilterStates : filterStates;
-      target.push({ table, active, watched: [...watched] });
+      target.push({ table, active, watched: [...watched], emptyText: options && options.emptyText });
     },
-    readRow: () => null,
+    readRow: () => ({ code: '123456', name: '示例转债' }),
     readQdiiRow: () => null,
     showHint: () => {},
   };
@@ -77,7 +91,14 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
       observe() {}
     },
     jisiluDeck: {
-      createWatchlistStore: () => ({ list: async () => [] }),
+      createWatchlistStore: () => ({
+        list: async () => [...watchedCodes].map((code) => ({ code })),
+        listPending: async () => [...pendingCodes].map((code) => ({ code })),
+        addPending: async (code) => { pendingCodes.add(code); purchaseCalls.push('add:' + code); },
+        removePending: async (code) => { pendingCodes.delete(code); purchaseCalls.push('remove:' + code); },
+        add: async (code) => { watchedCodes.add(code); },
+        remove: async (code) => { watchedCodes.delete(code); pendingCodes.delete(code); },
+      }),
       createQdiiWatchlistStore: () => ({
         list: async () => [],
         add: async () => {},
@@ -93,6 +114,7 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
     scannedTables,
     filterStates,
     qdiiFilterStates,
+    purchaseCalls,
     setCurrentTable(table) {
       currentTable = table;
     },
@@ -107,11 +129,24 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
       assert.strictEqual(intervals.length, 1, '应只启动一个持续状态对账循环');
       intervals[0]();
     },
-    clickFilter() {
+    clickFilter(mode) {
+      const button = { getAttribute: (name) => name === 'data-jd-filter-mode' ? mode : null };
       listeners.click({
         target: {
           closest(selector) {
-            if (selector === 'button.jd-local-filter') return {};
+            if (selector === 'button.jd-local-filter') return button;
+            return null;
+          },
+        },
+        preventDefault() {},
+        stopPropagation() {},
+      });
+    },
+    clickPurchase() {
+      listeners.click({
+        target: {
+          closest(selector) {
+            if (selector === 'a.jd-purchase-btn') return purchaseButton;
             return null;
           },
         },
@@ -123,7 +158,7 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
       listeners.change({
         target: {
           checked,
-          dataset: { jdCategory: category },
+          getAttribute(name) { return name === 'data-jd-category' ? category : null; },
           closest(selector) {
             if (selector === 'input.jd-local-filter') return this;
             return null;
@@ -175,18 +210,38 @@ test('内容脚本从封闭基金过渡页启动时，应立即监听并等待�
   assert.deepStrictEqual(harness.scannedTables, [returnedTable]);
 });
 
-test('顶部按钮切换本地筛选，并在同一内容脚本会话中保持状态', async () => {
+test('顶部双按钮互斥切换本地自选与待购筛选，并在会话中保持状态', async () => {
   const harness = createHarness();
   await new Promise((resolve) => setImmediate(resolve));
   assert.strictEqual(harness.filterStates.at(-1).active, false);
 
-  harness.clickFilter();
+  harness.clickFilter('watchlist');
   assert.strictEqual(harness.filterStates.at(-1).active, true);
+  assert.strictEqual(harness.filterStates.at(-1).emptyText, '当前筛选条件下暂无本地自选');
   harness.runReconcileInterval();
   assert.strictEqual(harness.filterStates.at(-1).active, true, '持续对账不得重置筛选状态');
 
-  harness.clickFilter();
+  harness.clickFilter('pending');
+  assert.strictEqual(harness.filterStates.at(-1).active, true);
+  assert.strictEqual(harness.filterStates.at(-1).emptyText, '当前筛选条件下暂无待购可转债');
+
+  harness.clickFilter('pending');
   assert.strictEqual(harness.filterStates.at(-1).active, false);
+});
+
+test('名称旁待购入口直接加入和清除待购，不影响本地自选', async () => {
+  const harness = createHarness({ id: 'initial-cb-table' }, [], ['123456']);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  harness.clickPurchase();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepStrictEqual(harness.purchaseCalls, ['add:123456']);
+  assert.deepStrictEqual(harness.filterStates.at(-1).watched, ['123456']);
+
+  harness.clickPurchase();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepStrictEqual(harness.purchaseCalls, ['add:123456', 'remove:123456']);
+  assert.deepStrictEqual(harness.filterStates.at(-1).watched, ['123456'], '清除待购后本地自选仍存在');
 });
 
 test('Manifest 覆盖可转债入口和统一数据板块 SPA 过渡路径', () => {

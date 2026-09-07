@@ -91,7 +91,7 @@ function evaluate(session, expression) {
 function staticChecks() {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
   check('manifest 为 MV3', manifest.manifest_version === 3);
-  check('manifest 版本为 0.3.0', manifest.version === '0.3.0', manifest.version);
+  check('manifest 版本为 0.4.0', manifest.version === '0.4.0', manifest.version);
   check('权限只有 storage', JSON.stringify(manifest.permissions) === JSON.stringify(['storage']));
   check(
     'QDII 路径由现有 /data/* 最小范围覆盖',
@@ -140,10 +140,10 @@ const PHASE_ONE = `
     const target = table(category);
     const current = target && rows(category);
     return target?.getClientRects().length > 0
-      && current.length > 5
+      && (current.length > 0 || /请\\s*登录/.test(target.textContent))
       && current.every((tr) => tr.querySelectorAll('a.jd-local-btn[data-jd-kind="qdii"]').length === 1)
       && target.querySelector('input.jd-local-filter[data-jd-category="' + category + '"]');
-  }), '等待欧美与商品本地控件注入超时；请先重新加载扩展');
+  }), '等待欧美与商品本地控件注入超时');
 
   const siteSelectedItems = [];
   for (const category of Object.keys(config)) {
@@ -157,26 +157,31 @@ const PHASE_ONE = `
     check(category + ' 本地筛选使用独立原生复选框', local.type === 'checkbox'
       && !local.hasAttribute('name') && !local.hasAttribute('onclick')
       && getComputedStyle(localLabel).fontSize === getComputedStyle(nativeLabel).fontSize);
-    check(category + ' 每行只注入一个本地按钮', items.every((item) => item.btn));
+    check(category + ' 每个可操作行只注入一个本地按钮', items.every((item) => item.btn), 'rows=' + items.length);
+    check(category + ' 不注入可转债待购入口', !target.querySelector('a.jd-purchase-btn'));
     siteSelectedItems.push(...items.filter((item) => item.op.querySelector('a[href*="delOwnedQd"]')));
-    check(category + ' 操作列扩宽且按钮不重叠越界', items.every((item) => {
+    check(category + ' 可操作行的按钮不重叠越界', items.every((item) => {
       const cell = item.op.getBoundingClientRect();
       const site = item.op.querySelector('a:not(.jd-local-btn)').getBoundingClientRect();
       const localRect = item.btn.getBoundingClientRect();
       return cell.width >= 45.5 && localRect.left - site.right >= 5.5 && localRect.right <= cell.right + 0.5;
-    }));
-    check(category + ' 本地图标保持 13×13px', items.every((item) => {
+    }), items.length ? '' : '当前游客页面无可操作数据行');
+    check(category + ' 可操作行的本地图标保持 13×13px', items.every((item) => {
       const rect = item.icon.getBoundingClientRect();
       return Math.abs(rect.width - 13) < 0.6 && Math.abs(rect.height - 13) < 0.6;
-    }));
+    }), items.length ? '' : '当前游客页面无可操作数据行');
   }
-  check('站内已自选行仍保留独立本地按钮', siteSelectedItems.length > 0
-    && siteSelectedItems.every((item) => item.btn), '已检查 ' + siteSelectedItems.length + ' 行');
+  check('页面中的站内已自选行仍保留独立本地按钮', siteSelectedItems.every((item) => item.btn),
+    '已检查 ' + siteSelectedItems.length + ' 行');
 
   const selected = [];
   for (const category of Object.keys(config)) {
     const candidate = rows(category).map((tr) => info(category, tr)).find((item) => item.glyph === PLUS);
-    if (!candidate) throw new Error(category + ' 没有可用于验收的未选记录');
+    if (!candidate) {
+      check(category + ' 行交互按页面数据可用性执行', rows(category).length === 0,
+        rows(category).length === 0 ? '当前游客页面无可操作数据行' : '没有未选记录');
+      continue;
+    }
     check(category + ' 未选按钮为橙色 +', getComputedStyle(candidate.icon).color === PLUS_RGB);
     candidate.btn.click();
     await waitFor(() => info(category, candidate.tr).glyph === MINUS, category + ' 加入本地自选超时');
@@ -244,7 +249,7 @@ function phaseTwoExpression(records) {
       throw new Error('清理 ' + category + ' 测试记录超时');
     };
     await waitFor(() => records.every((item) => state(item.category, item.code).glyph), '刷新后等待欧美与商品状态恢复超时');
-    check('刷新后欧美与商品记录恢复红色 - 和名称标红', records.every((item) => {
+    check('刷新后已操作记录恢复红色 - 和名称标红', records.every((item) => {
       const itemState = state(item.category, item.code);
       return itemState.glyph === MINUS && getComputedStyle(itemState.name).color === RED_RGB;
     }));
@@ -255,7 +260,7 @@ function phaseTwoExpression(records) {
     const asiaTab = [...document.querySelectorAll('a')].find((a) => (a.textContent || '').trim() === '亚洲市场');
     asiaTab.click();
     await waitFor(() => location.hash === '#qdiia' && table('asia').getClientRects().length > 0
-      && rows('asia').length > 5
+      && (rows('asia').length > 0 || /请\\s*登录/.test(table('asia').textContent))
       && rows('asia').every((tr) => tr.querySelector('a.jd-local-btn[data-jd-category="asia"]'))
       && filter('asia'), '切换亚洲市场并等待控件注入超时');
     check('亚洲市场只处理可见亚洲表', table('europe').getClientRects().length === 0
@@ -263,38 +268,47 @@ function phaseTwoExpression(records) {
       && table('asia').getClientRects().length > 0);
     const asiaNative = table('asia').querySelector('input[name="only_owned"]').closest('label');
     check('亚洲本地筛选紧邻站内仅看自选右侧', asiaNative.nextSibling === filter('asia').closest('label'));
+    check('亚洲市场不注入可转债待购入口', !table('asia').querySelector('a.jd-purchase-btn'));
 
     const asiaCandidate = rows('asia').map((tr) => state('asia', tr.children[0].textContent.trim()))
       .find((item) => item.glyph === PLUS);
-    if (!asiaCandidate) throw new Error('亚洲市场没有可用于验收的未选记录');
-    const asiaCode = asiaCandidate.tr.children[0].textContent.trim();
-    asiaCandidate.btn.click();
-    await waitFor(() => state('asia', asiaCode).glyph === MINUS, '亚洲记录加入超时');
-    filter('asia').click();
-    await waitFor(() => filter('asia').checked && rows('asia').some((tr) => tr.classList.contains('jd-local-filter-hidden')),
-      '亚洲本地筛选开启超时');
-    check('亚洲筛选只显示亚洲本地自选', rows('asia').filter((tr) => !tr.classList.contains('jd-local-filter-hidden'))
-      .every((tr) => state('asia', tr.children[0].textContent.trim()).glyph === MINUS));
+    let asiaCode = null;
+    if (asiaCandidate) {
+      asiaCode = asiaCandidate.tr.children[0].textContent.trim();
+      asiaCandidate.btn.click();
+      await waitFor(() => state('asia', asiaCode).glyph === MINUS, '亚洲记录加入超时');
+      records.push({ category: 'asia', code: asiaCode });
+      window.__jdQdiiE2eRecords = records;
+      filter('asia').click();
+      await waitFor(() => filter('asia').checked && rows('asia').some((tr) => tr.classList.contains('jd-local-filter-hidden')),
+        '亚洲本地筛选开启超时');
+      check('亚洲筛选只显示亚洲本地自选', rows('asia').filter((tr) => !tr.classList.contains('jd-local-filter-hidden'))
+        .every((tr) => state('asia', tr.children[0].textContent.trim()).glyph === MINUS));
+    } else {
+      check('亚洲行交互按页面数据可用性执行', rows('asia').length === 0,
+        rows('asia').length === 0 ? '当前游客页面无可操作数据行' : '没有未选记录');
+    }
 
     const europeTab = [...document.querySelectorAll('a')].find((a) => (a.textContent || '').trim() === '欧美市场');
     europeTab.click();
     await waitFor(() => location.hash === '#qdiie' && table('europe').getClientRects().length > 0, '切回欧美市场超时');
     check('三张表筛选状态相互独立并在市场切换后保持', filter('europe').checked === true
-      && filter('commodity').checked === false && filter('asia').checked === true);
+      && filter('commodity').checked === false && filter('asia').checked === Boolean(asiaCode));
 
     filter('europe').click();
     await waitFor(() => !filter('europe').checked, '关闭欧美筛选超时');
-    for (const item of records) {
+    for (const item of records.filter((item) => item.category !== 'asia')) {
       await removeLocal(item.category, item.code);
     }
 
-    asiaTab.click();
-    await waitFor(() => table('asia').getClientRects().length > 0, '清理前切换亚洲市场超时');
-    filter('asia').click();
-    await waitFor(() => !filter('asia').checked, '关闭亚洲筛选超时');
-    await removeLocal('asia', asiaCode);
-    check('三类验收测试数据已恢复', records.every((item) => state(item.category, item.code).glyph === PLUS)
-      && state('asia', asiaCode).glyph === PLUS);
+    if (asiaCode) {
+      asiaTab.click();
+      await waitFor(() => table('asia').getClientRects().length > 0, '清理前切换亚洲市场超时');
+      filter('asia').click();
+      await waitFor(() => !filter('asia').checked, '关闭亚洲筛选超时');
+      await removeLocal('asia', asiaCode);
+    }
+    check('本轮所有验收测试数据已恢复', records.every((item) => state(item.category, item.code).glyph === PLUS));
     return { checks, cleanupComplete: true };
   })()
   `;
@@ -305,7 +319,8 @@ function cleanupExpression(records) {
   (async () => {
     const PLUS = ${JSON.stringify(PLUS_ICON)};
     const MINUS = ${JSON.stringify(MINUS_ICON)};
-    const records = ${JSON.stringify(records)};
+    const records = [...${JSON.stringify(records)}, ...(window.__jdQdiiE2eRecords || [])]
+      .filter((item, index, all) => all.findIndex((other) => other.category === item.category && other.code === item.code) === index);
     const ids = { europe: 'flex_qdiie', commodity: 'flex_qdiic', asia: 'flex_qdiia' };
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const switchTo = async (label, hash, category) => {
