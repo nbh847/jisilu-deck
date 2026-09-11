@@ -10,6 +10,7 @@
 
 ## 已完成
 
+- 项目验证纪律增加任务收尾约束：浏览器及相关工具任务结束前必须停止会话、关闭窗口、归还标签页、恢复测试数据、停止本任务启动的 daemon、清理临时状态并复核；Chrome 顶部仍显示 BrowserSkill 调试提示时不得视为完成，无法清理的残留必须显式报告。
 - `0.4.1` 取消可转债加入本地自选后的名称标红；本地 `+`／`-`、待购、筛选和 QDII 行为保持不变。
 - Manifest V3 扩展骨架和最小权限配置。
 - 基于 `chrome.storage.local` 的本地自选存储。
@@ -33,6 +34,8 @@
 
 ## 验证基线
 
+- 2026-09-11 12:30：按标准 browser-skill 生命周期在单一 session 中创建两个可转债标签页，逐一关闭后停止 session；`bsk session list --json` 返回 `[]`，散帅现场确认任务标签页、Agent Window 和 Chrome 顶部 BrowserSkill 调试提示均已消失。
+- 2026-09-11 12:09：检查项目级 `AGENTS.md` 收尾约束与 `ROADMAP.md` 状态记录，并运行 `git diff --check`，确认规则覆盖会话、Agent Window、借用标签页、测试数据、任务启动的 daemon、Chrome 调试提示、临时状态及无法清理时的报告要求。
 - 2026-09-11 12:00：`node --test`，34/34 通过；新增可转债名称保持原色且 QDII 名称继续标红的回归覆盖。
 - 2026-09-11 12:00：使用 browser-skill CLI `0.2.1` 运行 `node tools/e2e-cb-list.js`，48/48 通过；确认 Manifest 版本为 `0.4.1`、加入及刷新后转债名称保持页面原色，并完成筛选、排序重渲染、SPA 往返和 Agent Window 重建回归；截图为 `/tmp/jd-bsk-e2e.png`，测试数据已恢复，Agent Window 已关闭。
 - 2026-09-07：`node --test`，33/33 通过；覆盖待购从属约束、幂等加入、直接清除、本地自选级联清理、写入失败原子性、名称旁入口、双筛选互斥、跨标签页同步和 QDII 回归。
