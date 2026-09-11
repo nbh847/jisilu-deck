@@ -114,7 +114,7 @@ function clickAndAllowNavigation(session, expression) {
 function staticChecks() {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
   check('manifest 为 MV3', manifest.manifest_version === 3);
-  check('manifest 版本为 0.4.0', manifest.version === '0.4.0', manifest.version);
+  check('manifest 版本为 0.4.1', manifest.version === '0.4.1', manifest.version);
   check('权限只有 storage', JSON.stringify(manifest.permissions) === JSON.stringify(['storage']), JSON.stringify(manifest.permissions));
   const contentScript = manifest.content_scripts && manifest.content_scripts[0];
   check(
@@ -244,7 +244,7 @@ const PHASE_ONE = `
   await waitFor(() => rowInfo(first.tr).glyph === MINUS && rowInfo(first.tr).purchase, '第一条记录加入本地自选超时');
   const watchedFirst = rowInfo(first.tr);
   check('加入后复用原站 - 字形和红色', watchedFirst.glyph === MINUS && watchedFirst.color === RED_RGB, watchedFirst.color || 'no color');
-  check('加入后名称与 - 同红', watchedFirst.nameColor === RED_RGB && watchedFirst.nameInline === RED_RGB, watchedFirst.nameColor || 'no color');
+  check('加入后名称保持页面原色', watchedFirst.nameColor === first.nameColor && watchedFirst.nameInline === first.nameInline, watchedFirst.nameColor || 'no color');
   check('代码字段颜色不变', getComputedStyle(first.tr.children[2].querySelector('a')).color === firstCodeColor);
   check('加入本地自选后名称旁显示灰色待购 +', watchedFirst.purchase.textContent === '+'
     && getComputedStyle(watchedFirst.purchase).color === 'rgb(144, 147, 153)');
@@ -351,9 +351,9 @@ function phaseTwoExpression(codes, pendingCode) {
     check('页面刷新后两个本地筛选默认关闭', filter('watchlist').getAttribute('aria-pressed') === 'false'
       && filter('pending').getAttribute('aria-pressed') === 'false'
       && rows().every((tr) => !tr.classList.contains('jd-local-filter-hidden')));
-    check('页面刷新后两条记录恢复红色 - 与名称标红', codes.every((code) => {
+    check('页面刷新后两条记录恢复红色 - 且名称不标红', codes.every((code) => {
       const item = state(code);
-      return item.glyph === MINUS && item.nameColor === RED_RGB && item.nameInline === RED_RGB;
+      return item.glyph === MINUS && item.nameColor !== RED_RGB && item.nameInline === '';
     }));
     check('页面刷新后待购状态恢复且未待购行保持灰色 +', state(pendingCode).purchase?.textContent === '待购'
       && codes.filter((code) => code !== pendingCode).every((code) => state(code).purchase?.textContent === '+'));

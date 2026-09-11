@@ -7,7 +7,7 @@
   const NS = (globalThis.jisiluDeck = globalThis.jisiluDeck || {});
 
   const PLUS_COLOR = '#e67e22'; // 本地 +（ui-spec.md §2）
-  const RED_COLOR = '#dd1817';  // 复用原站 - 的红色；已选名称与本地 - 同色（ui-spec.md §2/§3）
+  const RED_COLOR = '#dd1817';  // 复用原站 - 的红色；QDII 已选名称与本地 - 同色（ui-spec.md §2/§8）
   const PURCHASE_IDLE_COLOR = '#909399';
   const PLUS_ICON = '\ue61e';   // 原站 jisilu-iconfont 的 +
   const MINUS_ICON = '\ue61d';  // 原站 jisilu-iconfont 的 -
@@ -312,7 +312,8 @@
           ? '从本地自选移出【' + hook.name + '】'
           : '从本地自选移出[' + hook.name + ']');
         setAttr(btn, 'aria-label', '移出本地自选');
-        setStyle(hook.nameSpan, 'color', RED_COLOR);
+        if (hook.kind === 'qdii') setStyle(hook.nameSpan, 'color', RED_COLOR);
+        else if (hook.nameSpan.style.color !== '') hook.nameSpan.style.removeProperty('color');
       } else {
         setText(hook.icon, PLUS_ICON);
         setStyle(btn, 'color', PLUS_COLOR);

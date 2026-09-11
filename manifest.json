@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "jisilu-deck",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "在集思录可转债与 QDII 列表维护浏览器本地自选，并标记待购可转债。",
   "permissions": ["storage"],
   "content_scripts": [

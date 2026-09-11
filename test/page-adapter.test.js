@@ -57,6 +57,40 @@ test('findMainTable 在只有封闭基金表时返回 null', () => {
   assert.strictEqual(adapter.findMainTable(), null);
 });
 
+test('applyState 不改变可转债名称颜色，但保留 QDII 名称标红', () => {
+  const adapter = loadAdapterWithDocument({});
+  function style(initialColor) {
+    return {
+      color: initialColor,
+      removeProperty(name) { delete this[name]; },
+    };
+  }
+  function hook(kind) {
+    return {
+      kind,
+      name: '示例',
+      btn: {
+        style: {},
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value; },
+        getAttribute(name) { return this.attributes[name] ?? null; },
+      },
+      icon: { textContent: '' },
+      nameSpan: { style: style('#dd1817') },
+    };
+  }
+
+  const cb = hook('cb');
+  adapter.applyState(cb, true);
+  assert.strictEqual(cb.btn.style.color, '#dd1817');
+  assert.strictEqual(cb.nameSpan.style.color, undefined);
+
+  const qdii = hook('qdii');
+  adapter.applyState(qdii, true);
+  assert.strictEqual(qdii.btn.style.color, '#dd1817');
+  assert.strictEqual(qdii.nameSpan.style.color, '#dd1817');
+});
+
 test('ensureFilterGroup 在原站筛选组之后注入插件双按钮组并同步互斥状态', () => {
   let inserted = null;
   const showBlocked = { id: 'show-blocked' };

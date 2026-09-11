@@ -91,7 +91,7 @@ function evaluate(session, expression) {
 function staticChecks() {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
   check('manifest 为 MV3', manifest.manifest_version === 3);
-  check('manifest 版本为 0.4.0', manifest.version === '0.4.0', manifest.version);
+  check('manifest 版本为 0.4.1', manifest.version === '0.4.1', manifest.version);
   check('权限只有 storage', JSON.stringify(manifest.permissions) === JSON.stringify(['storage']));
   check(
     'QDII 路径由现有 /data/* 最小范围覆盖',
