@@ -27,7 +27,19 @@
 
   // 只在值变化时写入，避免重复触发观察器
   function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
-  function setStyle(el, prop, value) { if (el.style[prop] !== value) el.style[prop] = value; }
+  // 只在值变化时写入；以本扩展上次写入值为比较基准，
+  // 避免 inline style 规范化（如 hex→rgb）让比较永远不等、每轮重复写入。
+  function setStyle(el, prop, value) {
+    const last = el.__jdLastStyle || (el.__jdLastStyle = {});
+    const cached = last[prop];
+    if (cached && cached.requested === value && cached.actual === el.style[prop]) return;
+    if (value === '' && el.style[prop] === '') {
+      last[prop] = { requested: '', actual: '' };
+      return;
+    }
+    el.style[prop] = value;
+    last[prop] = { requested: value, actual: el.style[prop] };
+  }
   function setAttr(el, name, value) { if (el.getAttribute(name) !== value) el.setAttribute(name, value); }
   function ensureFilterStyle() {
     if (!document.getElementById || document.getElementById(FILTER_STYLE_ID)) return;
@@ -37,6 +49,20 @@
     style.id = FILTER_STYLE_ID;
     style.textContent = '.' + FILTER_HIDDEN_CLASS + '{display:none!important;}';
     host.appendChild(style);
+  }
+
+  let cachedMainTable = null;
+  let cachedMainRow = null;
+  let cachedFilterGroup = null;
+
+  function isMainRow(row) {
+    if (!row) return false;
+    const opCell = row.children[1];
+    const codeCell = row.children[2];
+    return Boolean(
+      opCell && opCell.querySelector('a[title^="加["]')
+      && codeCell && codeCell.querySelector('a[href^="/data/convert_bond_detail/"]')
+    );
   }
 
   NS.pageAdapter = {
@@ -55,18 +81,28 @@
     },
 
     // 主列表表 = 当前可见且直接子行同时含站内自选按钮与可转债详情链接的 table.jsl-table-body
+    // 定位结果缓存：每轮扫描只做 contains + 可见性两项廉价验证，表格被移除或隐藏后才重新遍历
     findMainTable() {
+      if (cachedMainTable
+        && cachedMainTable.getClientRects().length > 0
+        && document.contains(cachedMainTable)
+        && cachedMainRow
+        && document.contains(cachedMainRow)
+        && isMainRow(cachedMainRow)) {
+        return cachedMainTable;
+      }
+      cachedMainTable = null;
+      cachedMainRow = null;
       const tables = document.querySelectorAll('table.jsl-table-body');
       for (let i = 0; i < tables.length; i++) {
         if (tables[i].getClientRects().length === 0) continue;
         const rows = tables[i].querySelectorAll(':scope > tbody > tr');
         for (let j = 0; j < rows.length; j++) {
-          const opCell = rows[j].children[1];
-          const codeCell = rows[j].children[2];
-          if (
-            opCell && opCell.querySelector('a[title^="加["]')
-            && codeCell && codeCell.querySelector('a[href^="/data/convert_bond_detail/"]')
-          ) return tables[i];
+          if (isMainRow(rows[j])) {
+            cachedMainTable = tables[i];
+            cachedMainRow = rows[j];
+            return tables[i];
+          }
         }
       }
       return null;
@@ -92,43 +128,52 @@
     },
 
     // 插件自有筛选组独立挂在原站按钮组之后，不进入 Vue 管理的按钮组内部。
+    // 已注入的筛选组会被缓存复用（isConnected 校验），避免每轮扫描重查原站按钮组。
     ensureFilterGroup(activeMode) {
-      const groups = document.querySelectorAll('.table-top .table-bar .el-checkbox-group.attention');
-      let group = null;
-      for (let i = 0; i < groups.length; i++) {
-        const text = (groups[i].textContent || '').replace(/\s+/g, '');
-        if (text.includes('仅看自选') && text.includes('仅看持仓')) {
-          group = groups[i];
-          break;
-        }
-      }
-      if (!group || !group.parentElement) return null;
-
-      const bar = group.parentElement;
-      let localGroup = bar.querySelector(':scope > .' + FILTER_GROUP_CLASS);
+      let localGroup = cachedFilterGroup
+        && cachedFilterGroup.isConnected
+        && cachedFilterGroup.getClientRects().length > 0
+        ? cachedFilterGroup
+        : null;
       if (!localGroup) {
-        localGroup = document.createElement('div');
-        localGroup.className = FILTER_GROUP_CLASS;
-        localGroup.setAttribute('role', 'group');
-        localGroup.setAttribute('aria-label', '本地清单筛选');
-        localGroup.style.cssText = 'display:inline-flex;margin-left:8px;vertical-align:middle;';
-        const configs = [
-          { mode: 'watchlist', text: '仅看本地自选' },
-          { mode: 'pending', text: '仅看待购' },
-        ];
-        for (let i = 0; i < configs.length; i++) {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = FILTER_BTN_CLASS;
-          setAttr(btn, 'data-jd-filter-mode', configs[i].mode);
-          btn.textContent = configs[i].text;
-          btn.style.cssText = 'box-sizing:border-box;padding:7px 15px;border:1px solid #dcdfe6;border-radius:'
-            + (i === 0 ? '4px 0 0 4px' : '0 4px 4px 0')
-            + ';background:#fff;color:#606266;font-family:inherit;font-size:12px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;outline:0;transition:background-color .15s,border-color .15s,color .15s;';
-          if (i > 0) btn.style.marginLeft = '-1px';
-          localGroup.appendChild(btn);
+        const groups = document.querySelectorAll('.table-top .table-bar .el-checkbox-group.attention');
+        let group = null;
+        for (let i = 0; i < groups.length; i++) {
+          const text = (groups[i].textContent || '').replace(/\s+/g, '');
+          if (text.includes('仅看自选') && text.includes('仅看持仓')) {
+            group = groups[i];
+            break;
+          }
         }
-        bar.insertBefore(localGroup, group.nextSibling);
+        if (!group || !group.parentElement) return null;
+
+        const bar = group.parentElement;
+        localGroup = bar.querySelector(':scope > .' + FILTER_GROUP_CLASS);
+        if (!localGroup) {
+          localGroup = document.createElement('div');
+          localGroup.className = FILTER_GROUP_CLASS;
+          localGroup.setAttribute('role', 'group');
+          localGroup.setAttribute('aria-label', '本地清单筛选');
+          localGroup.style.cssText = 'display:inline-flex;margin-left:8px;vertical-align:middle;';
+          const configs = [
+            { mode: 'watchlist', text: '仅看本地自选' },
+            { mode: 'pending', text: '仅看待购' },
+          ];
+          for (let i = 0; i < configs.length; i++) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = FILTER_BTN_CLASS;
+            setAttr(btn, 'data-jd-filter-mode', configs[i].mode);
+            btn.textContent = configs[i].text;
+            btn.style.cssText = 'box-sizing:border-box;padding:7px 15px;border:1px solid #dcdfe6;border-radius:'
+              + (i === 0 ? '4px 0 0 4px' : '0 4px 4px 0')
+              + ';background:#fff;color:#606266;font-family:inherit;font-size:12px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;outline:0;transition:background-color .15s,border-color .15s,color .15s;';
+            if (i > 0) btn.style.marginLeft = '-1px';
+            localGroup.appendChild(btn);
+          }
+          bar.insertBefore(localGroup, group.nextSibling);
+        }
+        cachedFilterGroup = localGroup;
       }
       const buttons = localGroup.querySelectorAll('button.' + FILTER_BTN_CLASS);
       for (let i = 0; i < buttons.length; i++) {
@@ -201,8 +246,15 @@
       return { category: category, code: code, name: name, opCell: opCell, nameSpan: nameCell };
     },
 
-    // 幂等注入：同一行只保留一个插件按钮；返回挂钩或 null
-    ensureButton(tr) {
+    // 幂等注入：同一行只保留一个插件按钮；返回挂钩或 null。
+    // 已同步行（按钮存在且 data-jd-state=1）在非强制模式下返回 { fast: true }，
+    // 供主逻辑整行跳过；forceFull 时仍完整读取并返回挂钩。
+    ensureButton(tr, forceFull) {
+      const opCell = tr.children[1];
+      if (!forceFull && opCell) {
+        const existing = opCell.querySelector(':scope > a.' + BTN_CLASS);
+        if (existing && existing.getAttribute('data-jd-state') === '1') return { fast: true };
+      }
       const info = this.readRow(tr);
       if (!info || !info.opCell) return null;
       let btn = info.opCell.querySelector(':scope > a.' + BTN_CLASS);
@@ -225,7 +277,12 @@
         icon.style.cssText = 'margin:0;width:13px;height:13px;line-height:13px;font-size:13px;vertical-align:top;';
         btn.appendChild(icon);
       }
-      return { code: info.code, name: info.name, btn: btn, icon: icon, nameSpan: info.nameSpan };
+      return { code: info.code, name: info.name, btn: btn, icon: icon, nameCell: info.nameCell, nameSpan: info.nameSpan };
+    },
+
+    // 行状态同步完成后写入标记，供下一轮快速跳过
+    markRowSynced(hook) {
+      if (hook && hook.btn) setAttr(hook.btn, 'data-jd-state', '1');
     },
 
     ensureQdiiButton(tr, category) {
@@ -264,14 +321,24 @@
     },
 
     // 待购入口只出现在本地自选行的转债名称旁；非本地自选行清理已有入口。
-    ensurePurchaseButton(tr, watched) {
-      const info = this.readRow(tr);
-      if (!info || !info.nameCell) return null;
-      let btn = info.nameCell.querySelector(':scope > a.' + PURCHASE_BTN_CLASS);
+    // 接收 ensureButton 的完整 hook，复用已读取的行信息，不再重复解析行结构。
+    ensurePurchaseButton(hook, watched) {
+      if (!hook || hook.fast || !hook.nameCell) return null;
+      const nameCell = hook.nameCell;
+      let btn = nameCell.querySelector(':scope > a.' + PURCHASE_BTN_CLASS);
       if (!watched) {
         if (btn) btn.remove();
+        if (Object.prototype.hasOwnProperty.call(nameCell, '__jdPurchaseWhiteSpace')) {
+          setStyle(nameCell, 'whiteSpace', nameCell.__jdPurchaseWhiteSpace);
+          delete nameCell.__jdPurchaseWhiteSpace;
+        }
         return null;
       }
+      if (!Object.prototype.hasOwnProperty.call(nameCell, '__jdPurchaseWhiteSpace')) {
+        nameCell.__jdPurchaseWhiteSpace = nameCell.style.whiteSpace || '';
+      }
+      // 名称单元格的可用宽度很窄，待购标签是 inline-block；禁止换行才能保证入口与名称同行。
+      setStyle(nameCell, 'whiteSpace', 'nowrap');
       if (!btn) {
         btn = document.createElement('a');
         btn.className = PURCHASE_BTN_CLASS;
@@ -280,9 +347,9 @@
         btn.setAttribute('tabindex', '0');
         btn.style.cssText = 'display:inline-block;margin-left:2px;padding:0;border-radius:2px;font-size:10px;line-height:14px;text-decoration:none;vertical-align:baseline;cursor:pointer;user-select:none;white-space:nowrap;';
         // 页面可能在名称后追加条款状态图标；待购入口必须紧跟名称，不能 append 到图标之后被挤到下一行。
-        info.nameCell.insertBefore(btn, info.nameSpan.nextSibling);
+        nameCell.insertBefore(btn, hook.nameSpan.nextSibling);
       }
-      return { code: info.code, name: info.name, btn: btn };
+      return { code: hook.code, name: hook.name, btn: btn };
     },
 
     applyPurchaseState(hook, pending) {
@@ -313,7 +380,7 @@
           : '从本地自选移出[' + hook.name + ']');
         setAttr(btn, 'aria-label', '移出本地自选');
         if (hook.kind === 'qdii') setStyle(hook.nameSpan, 'color', RED_COLOR);
-        else if (hook.nameSpan.style.color !== '') hook.nameSpan.style.removeProperty('color');
+        else setStyle(hook.nameSpan, 'color', '');
       } else {
         setText(hook.icon, PLUS_ICON);
         setStyle(btn, 'color', PLUS_COLOR);
@@ -321,16 +388,23 @@
           ? '将【' + hook.name + '】加入本地自选'
           : '加[' + hook.name + ']为本地自选转债');
         setAttr(btn, 'aria-label', '加入本地自选');
-        if (hook.nameSpan.style.color !== '') hook.nameSpan.style.removeProperty('color');
+        setStyle(hook.nameSpan, 'color', '');
       }
     },
 
-    // 本地筛选只作用于当前已渲染行，与站内筛选取交集；关闭时完整移除插件隐藏类
+    // 本地筛选只作用于当前已渲染行，与站内筛选取交集；关闭时完整移除插件隐藏类。
+    // 筛选保持关闭时数据行不会有隐藏类残留，直接跳过整轮行遍历。
     applyLocalFilter(table, watched, active, options) {
       const config = options || {};
       const emptyKey = config.category || 'cb';
       ensureFilterStyle();
-      const rows = config.kind === 'qdii' ? this.qdiiDataRows(table) : this.dataRows(table);
+      const filterWasActive = table.__jdFilterActive;
+      const skipRows = filterWasActive === false && active === false;
+      const rows = skipRows
+        ? []
+        : (config.kind === 'qdii' ? this.qdiiDataRows(table) : this.dataRows(table));
+      table.__jdFilterActive = active;
+      // skipRows 时 active 必为 false，visibleCount 不参与空状态判定
       let visibleCount = 0;
       for (let i = 0; i < rows.length; i++) {
         const info = config.kind === 'qdii'

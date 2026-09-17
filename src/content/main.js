@@ -27,6 +27,20 @@
     asia: false,
   };
   let scanTimer = 0;
+  let resumeTimer = 0;
+  // 本地数据可能变化时置位，触发下一轮全量同步；全量轮完成后清除，后续扫描走增量快扫。
+  let dirtyAll = true;
+  // 分帧扫描断点：一次 scan 有墙钟预算上限，未处理完的行记到断点，下一帧续扫。
+  const resume = { table: null, rowsLength: 0, index: 0 };
+  const SCAN_BUDGET_MS = 8;
+
+  function requireFullScan() {
+    dirtyAll = true;
+    clearTimeout(resumeTimer);
+    resumeTimer = 0;
+    resume.rowsLength = 0;
+    resume.index = 0;
+  }
 
   async function refreshWatched() {
     try {
@@ -49,20 +63,44 @@
         qdiiWatched[category] = new Set();
       }
     }
+    // 新存储快照必须从首行全量应用，不能沿用旧快照留下的分帧断点。
+    requireFullScan();
   }
 
-  function scanCb() {
+  function scanCb(forceFull) {
     // SPA 分类切换可能会把旧表格留在 DOM 中；每轮都以当前可见目标表格为准。
     table = adapter.findMainTable();
-    if (!table) return false;
+    if (!table) {
+      resume.table = null;
+      resume.rowsLength = 0;
+      resume.index = 0;
+      return false;
+    }
     adapter.ensureFilterGroup(localFilterMode);
     const rows = adapter.dataRows(table);
-    for (let i = 0; i < rows.length; i++) {
-      const hook = adapter.ensureButton(rows[i]);
-      if (hook) adapter.applyState(hook, watched.has(hook.code));
-      const purchaseHook = adapter.ensurePurchaseButton(rows[i], hook && watched.has(hook.code));
-      if (purchaseHook) adapter.applyPurchaseState(purchaseHook, pending.has(purchaseHook.code));
+    if (resume.table !== table || resume.rowsLength !== rows.length) {
+      resume.table = table;
+      resume.rowsLength = rows.length;
+      resume.index = 0; // 表格对象或行数变化后从头续扫
     }
+    const startedAt = Date.now();
+    let i = resume.index;
+    for (; i < rows.length; i++) {
+      if (i > resume.index && Date.now() - startedAt >= SCAN_BUDGET_MS) break;
+      const hook = adapter.ensureButton(rows[i], forceFull);
+      if (!hook || hook.fast) continue; // 已同步行直接用 ensureButton 的快路径跳过
+      adapter.applyState(hook, watched.has(hook.code));
+      const purchaseHook = adapter.ensurePurchaseButton(hook, watched.has(hook.code));
+      if (purchaseHook) adapter.applyPurchaseState(purchaseHook, pending.has(purchaseHook.code));
+      adapter.markRowSynced(hook);
+    }
+    if (i < rows.length) {
+      resume.index = i;
+      scheduleResume();
+      return true; // 表已找到，本轮未处理完的行在下一帧续扫
+    }
+    if (forceFull) dirtyAll = false;
+    resume.index = 0;
     const filtered = localFilterMode === 'pending' ? pending : watched;
     adapter.applyLocalFilter(table, filtered, localFilterMode !== null, {
       emptyText: localFilterMode === 'pending'
@@ -96,12 +134,18 @@
   }
 
   function scan() {
-    return { cb: scanCb(), qdii: scanQdii() };
+    return { cb: scanCb(dirtyAll), qdii: scanQdii() };
   }
 
   function scheduleScan() {
     clearTimeout(scanTimer);
     scanTimer = setTimeout(scan, 150);
+  }
+
+  // 分帧续扫：本轮已超预算时，把剩下的行安排到下一帧，避免单轮同步长任务阻塞主线程
+  function scheduleResume() {
+    clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(function () { scanCb(dirtyAll); }, 0);
   }
 
   async function onLocalButtonClick(btn) {
@@ -206,8 +250,11 @@
   async function boot() {
     // 内容脚本同时加载在可转债与 `/data/*` SPA 过渡页；无目标表格时只等待，不写 DOM。
     new MutationObserver(scheduleScan).observe(document.body, { childList: true, subtree: true });
-    // 集思录 SPA 品种切换不保证产生可观察的 DOM 事件；低频对账作为最终一致性保障。
-    setInterval(scan, 1000);
+    // 集思录 SPA 品种切换不保证产生可观察的 DOM 事件；低频全量对账作为最终一致性保障。
+    setInterval(function () {
+      requireFullScan(); // 对账轮全量执行，兜底纠正增量快扫遗漏的任何状态漂移
+      scan();
+    }, 5000);
     await refreshWatched();
     const found = scan();
     if (found.cb || found.qdii) console.log('[jisilu-deck] 已在目标列表注入本地自选按钮');

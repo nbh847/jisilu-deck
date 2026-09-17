@@ -80,6 +80,20 @@ function navigate(session) {
   );
 }
 
+function reloadForE2E(session) {
+  try {
+    runBsk(
+      ['reload', '--session', session, '--wait-until', 'domcontentloaded', '--timeout', '30s', '--json'],
+      { json: true }
+    );
+  } catch (error) {
+    // bsk 在扩展重载后的 reload RPC 偶发超时；同 URL 导航同样创建新文档并验证状态恢复。
+    if (!/tool RPC timed out after 30s/.test(error.message)) throw error;
+    console.log('⚠️ bsk reload RPC 超时，改用同 URL 导航继续刷新验收');
+    navigate(session);
+  }
+}
+
 function evaluate(session, expression) {
   const response = runBsk(
     ['evaluate', '--session', session, '--timeout', '60s', '--json', expression],
@@ -571,7 +585,7 @@ function cleanupExpression(codes) {
     testCodes = phaseOne.codes;
     testPendingCode = phaseOne.pendingCode;
 
-    runBsk(['reload', '--session', session, '--wait-until', 'domcontentloaded', '--timeout', '30s', '--json'], { json: true });
+    reloadForE2E(session);
     const phaseTwo = evaluate(session, phaseTwoExpression(testCodes, testPendingCode));
     addChecks(phaseTwo.checks);
     clickAndAllowNavigation(session, CLICK_CLOSED_FUND);

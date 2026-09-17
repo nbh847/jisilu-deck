@@ -6,7 +6,7 @@
 
 ## 进行中
 
-- 无。
+- 可转债长列表性能修复：已完成 8ms 分帧扫描、增量快扫、表格与筛选组缓存、幂等样式写入和 5 秒低频全量对账，并修复 QDII 名称颜色缓存、存储变化沿用旧断点、SPA 原地改写表格后的缓存失效问题；单元测试 44/44 通过。真实 Chrome 验收部分完成：QDII 32/32 通过，可转债首次 47/48 且唯一失败为待购入口同一行布局断言，重试又遇到 bsk RPC 超时；540 行弱机性能前后对照仍待完成。
 
 ## 已完成
 
@@ -34,6 +34,18 @@
 
 ## 验证基线
 
+- 2026-09-17 14:15：提交前复核当前性能修复；`node --test` 44/44 通过，`git diff --check` 通过，`tools/e2e-cb-list.js` 与 `tools/e2e-qdii.js` 语法检查通过。真实 540 行弱机性能前后对照仍待完成，本次验证不改变该验收边界。
+- 2026-09-14 22:03：继续按 browser-skill CLI `0.2.1` 做真实验收；因 `bsk` 无法访问 `chrome://extensions`，本轮未能重新加载当前未打包扩展，E2E 结果不能单独证明工作区源码已被浏览器加载。QDII E2E `32/32` 通过；可转债首次 `47/48`，唯一失败为“待购标记紧跟名称且保持同一行”，重试在同一断言失败后又遇到 bsk RPC 超时，结果 `32/35`。重试产生的测试记录 `123285`、`110077` 已定向清理，原有 `127061`、`110081` 未改变；最终 `bsk session list --json` 返回 `[]`。当前 30 行可转债页面采集到 1 个筛选组、30 个本地按钮；连续 8 秒 `PerformanceObserver` 未捕获 Long Task（`0` 个、`0ms`），导航 `DOMContentLoaded` 约 `464.5ms`，该结果不等同于 540 行弱机前后对照。
+- 2026-09-14 21:24：按散帅要求撤回当前工作区未提交的 Playwright 迁移，恢复 `AGENTS.md`、`CLAUDE.md`、README、验证设计和两套 E2E 到 browser-skill／bsk；移除 `tools/playwright-cdp.js`。保留可转债长列表性能修复及其测试、性能架构文档和 `handoff.md`；`node --test` 44/44、两个 E2E 脚本语法检查、`git diff --check` 均通过。
+- 2026-09-14 21:00：按散帅要求使用 browser-skill CLI `0.2.1` 重新检查集思录可转债列表页：启动隔离 session `mdxu` 后导航 `https://www.jisilu.cn/web/data/cb/list`，`bsk observe` 显示页面标题「列表 - 可转债 - 集思录」、数量 `30/30` 条，插件的“仅看本地自选”“仅看待购”筛选和行内“加入本地自选”按钮均已渲染；未点击或修改页面数据。关闭任务标签页后 session 自动移除；`bsk session list --json` 返回 `[]`、`active sessions = 0`，现场只读检查无残留 Agent Window 或任务标签页。本轮未启动新的 daemon，既有 PID `8817` 保持运行。
+- 2026-09-14 16:08：接手复验，`node --test` 44/44 通过，`git diff --check` 通过。真实 Chrome 可转债 E2E 首次在 session 创建阶段超时（6 项静态检查通过）；唯一一次重试创建 `mucw` 后，初始空白页 `snapshot` 超时，随后 `session stop mucw` 也超时。两次均未导航到目标页面、未执行网页功能断言或修改测试数据；QDII 与性能前后测量未执行。日志新增 16:06:08 断连、16:06:42 握手首帧超时、16:06:49 重连，以及 16:07:54 用户关闭 Agent Window 后移除 `mucw`。最终 `bsk doctor` 全部通过、session 列表为 `[]`；Chrome 顶部调试提示仍待现场确认，不能认定浏览器收尾全部完成。现有 daemon PID 8817 为本轮开始前已运行，未手动启停。
+- 2026-09-14 15:49：散帅现场确认 Chrome 仍显示 BrowserSkill 控制状态。`bsk status` 同时显示浏览器连接为 1，但 `active sessions = 0`，`bsk session list --json` 返回 `[]`；说明 `dtiz` 停止超时后留下了无法通过 session ID 管理的 Chrome 端孤儿窗口或调试附加状态，不能将空 session 列表视为清理完成。受 browser-skill 规则限制，不猜测 session ID、不手动管理 daemon，等待散帅关闭可见 Agent Window 并确认顶部提示是否消失。
+- 2026-09-14 15:46：散帅已在 `chrome://extensions` 重新加载未打包扩展。随后两次运行 `node tools/e2e-cb-list.js`：第一次创建 session 等待扩展连接超时；第二次创建 `dtiz` 后页面工具 RPC 超时，功能断言均未开始，静态前置检查分别为 6/7、6/8。`bsk logs` 显示浏览器连接在执行期间断开并出现 `BrowserSinkClosed`，属于 browser-skill 连接故障，不能据此判断插件功能通过或失败；按 Skill 规则停止重试，QDII E2E 未运行。脚本停止 `dtiz` 的命令超时，随后 `bsk session list --json` 虽返回 `[]`，但不能证明 Chrome 端状态已清理。
+- 2026-09-14 15:32：`node --test`，44/44 通过；覆盖分帧续扫、存储变化从首行重启全量同步、样式写入幂等、QDII 移出后重新加入恢复名称红色、表格与筛选组缓存及缓存失效路径。`git diff --check` 通过。
+- 2026-09-14 15:32：尝试按 browser-skill 生命周期重新加载扩展并执行真实 Chrome E2E；`bsk doctor` 确认 CLI、协议和 1 个浏览器连接正常，但 `chrome://extensions` 导航被 CDP 拒绝并返回 `Detached while handling command`，未能重新加载当前源码，故未运行无效的旧扩展 E2E。已停止本次 session `pswp`，`bsk session list --json` 返回 `[]`；受 browser-skill 规则限制未手动管理其自动启动的 daemon，Chrome 顶部调试提示未能现场确认。
+- 2026-09-14 13:28：`node --test`，34/34 通过；发布打包前复跑确认 `0.4.1` 基线，源码与 `35a2917` 提交一致且工作区无未提交改动。
+- 2026-09-14 13:28：`release/jisilu-deck-v0.4.1.zip` 已生成并校验：包含 6 个必要运行与说明文件，Manifest 版本为 `0.4.1`，包内文件与当前源码一致，SHA-256 为 `08aba7b3ab68d983d9e7274ce21239ebc52725f0676a2716094530162564ae59`。
+- 2026-09-14 13:28：`release/jisilu-deck-v0.4.1-release-notes.md` 已生成，Release Title 为 `jisilu-deck v0.4.1`；GitHub tag、Release 与附件尚未创建或上传。
 - 2026-09-11 12:30：按标准 browser-skill 生命周期在单一 session 中创建两个可转债标签页，逐一关闭后停止 session；`bsk session list --json` 返回 `[]`，散帅现场确认任务标签页、Agent Window 和 Chrome 顶部 BrowserSkill 调试提示均已消失。
 - 2026-09-11 12:09：检查项目级 `AGENTS.md` 收尾约束与 `ROADMAP.md` 状态记录，并运行 `git diff --check`，确认规则覆盖会话、Agent Window、借用标签页、测试数据、任务启动的 daemon、Chrome 调试提示、临时状态及无法清理时的报告要求。
 - 2026-09-11 12:00：`node --test`，34/34 通过；新增可转债名称保持原色且 QDII 名称继续标红的回归覆盖。

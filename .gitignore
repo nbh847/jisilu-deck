@@ -6,4 +6,5 @@ CLAUDE.md
 !.env.example
 *.log
 node_modules/
+.tmp/
 release/

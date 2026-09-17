@@ -15,12 +15,20 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
   const observers = [];
   const timers = [];
   const intervals = [];
+  const intervalDelays = [];
+  let nextTimerId = 1;
+  let now = 0;
   const listeners = {};
+  const storageChangeListeners = [];
   const filterStates = [];
   const qdiiFilterStates = [];
   const watchedCodes = new Set(initialWatchlist);
   const pendingCodes = new Set(initialPending);
   const purchaseCalls = [];
+  const adapterRef = {
+    ensureButtonFlags: [],
+    applyStateCalls: 0,
+  };
   const row = { id: 'row' };
   const purchaseButton = {
     attributes: {},
@@ -47,12 +55,13 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
     },
     ensureQdiiButton: (row, category) => ({ code: '520580', category }),
     ensureQdiiFilterCheckbox: () => ({}),
-    applyState: () => {},
+    applyState: () => { adapterRef.applyStateCalls += 1; },
     applyPurchaseState: () => {},
     applyLocalFilter: (table, watched, active, options) => {
       const target = table.id && table.id.startsWith('qdii') ? qdiiFilterStates : filterStates;
       target.push({ table, active, watched: [...watched], emptyText: options && options.emptyText });
     },
+    markRowSynced: () => {},
     readRow: () => ({ code: '123456', name: '示例转债' }),
     readQdiiRow: () => null,
     showHint: () => {},
@@ -60,7 +69,7 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
   const chrome = {
     storage: {
       local: {},
-      onChanged: { addListener: () => {} },
+      onChanged: { addListener: (listener) => { storageChangeListeners.push(listener); } },
     },
   };
   const document = {
@@ -74,13 +83,19 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
     chrome,
     document,
     console,
-    clearTimeout: () => {},
-    setTimeout: (callback) => {
-      timers.push(callback);
-      return 1;
+    Date: { now: () => now },
+    clearTimeout: (id) => {
+      const index = timers.findIndex((timer) => timer.id === id);
+      if (index >= 0) timers.splice(index, 1);
     },
-    setInterval: (callback) => {
+    setTimeout: (callback) => {
+      const id = nextTimerId++;
+      timers.push({ id, callback });
+      return id;
+    },
+    setInterval: (callback, delay) => {
       intervals.push(callback);
+      intervalDelays.push(delay);
       return 1;
     },
     clearInterval: () => {},
@@ -115,6 +130,7 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
     filterStates,
     qdiiFilterStates,
     purchaseCalls,
+    adapter() { return adapter; },
     setCurrentTable(table) {
       currentTable = table;
     },
@@ -123,11 +139,22 @@ function createHarness(initialTable = { id: 'initial-cb-table' }, initialQdiiTab
     },
     runNextTimer() {
       assert.ok(timers.length > 0, '应存在待执行的扫描定时器');
-      timers.shift()();
+      timers.shift().callback();
+    },
+    advanceTime(ms) {
+      now += ms;
     },
     runReconcileInterval() {
       assert.strictEqual(intervals.length, 1, '应只启动一个持续状态对账循环');
       intervals[0]();
+    },
+    intervalDelay() {
+      assert.strictEqual(intervalDelays.length, 1, '应只注册一个持续状态对账循环');
+      return intervalDelays[0];
+    },
+    notifyStorageChanged() {
+      assert.strictEqual(storageChangeListeners.length, 1, '应注册一个 storage.onChanged 监听');
+      storageChangeListeners[0]({ localWatchlist: {} }, 'local');
     },
     clickFilter(mode) {
       const button = { getAttribute: (name) => name === 'data-jd-filter-mode' ? mode : null };
@@ -280,4 +307,82 @@ test('QDII 欧美、商品、亚洲筛选状态分别维护且互不影响', asy
   harness.runReconcileInterval();
   assert.strictEqual(harness.qdiiFilterStates.filter((item) => item.table === europe).at(-1).active, true);
   assert.strictEqual(harness.qdiiFilterStates.filter((item) => item.table === commodity).at(-1).active, false);
+});
+
+test('SPA 对账循环间隔降到 5 秒且只启动一个', async () => {
+  const harness = createHarness();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(harness.intervalDelay(), 5000, '持续对账间隔必须降频到 5 秒');
+});
+
+test('大量数据行分帧扫描：单轮有预算上限，通过续扫完成全部行', async () => {
+  const rows = Array.from({ length: 600 }, (_, index) => ({ id: 'row-' + index }));
+  const harness = createHarness();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  let ensured = 0;
+  const adapter = harness.adapter();
+  adapter.dataRows = () => rows;
+  adapter.ensureButton = () => {
+    ensured += 1;
+    harness.advanceTime(1);
+    return { code: '123456' };
+  };
+
+  harness.observers[0]();
+  harness.runNextTimer();
+  assert.ok(ensured > 0, '首帧应至少处理一批行');
+  assert.ok(ensured < 600, '单轮扫描必须在预算内截断，不得一次同步处理全部行');
+
+  let guard = 0;
+  while (ensured < 600 && guard < 1000) {
+    harness.runNextTimer();
+    guard += 1;
+  }
+  assert.strictEqual(ensured, 600, '续扫应最终覆盖全部行');
+  assert.ok(guard < 1000, '续扫不得形成死循环');
+});
+
+test('存储变化会取消旧续扫并从首行重新执行全量同步', async () => {
+  const rows = Array.from({ length: 20 }, (_, index) => ({ id: 'row-' + index }));
+  const harness = createHarness();
+  await new Promise((resolve) => setImmediate(resolve));
+  const visited = [];
+  const adapter = harness.adapter();
+  adapter.dataRows = () => rows;
+  adapter.ensureButton = (row) => {
+    visited.push(row.id);
+    harness.advanceTime(3);
+    return { code: '123456' };
+  };
+
+  harness.observers[0]();
+  harness.runNextTimer();
+  assert.deepStrictEqual(visited, ['row-0', 'row-1', 'row-2']);
+
+  visited.length = 0;
+  harness.notifyStorageChanged();
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.runNextTimer();
+  assert.strictEqual(visited[0], 'row-0', '新存储快照必须从首行重新同步');
+});
+
+test('本地自选变化后的下一轮为全量同步，随后恢复增量快扫', async () => {
+  const harness = createHarness();
+  await new Promise((resolve) => setImmediate(resolve));
+  const forceFlags = [];
+  const adapter = harness.adapter();
+  adapter.ensureButton = (tr, forceFull) => {
+    forceFlags.push(Boolean(forceFull));
+    return { code: '123456' };
+  };
+
+  harness.notifyStorageChanged();
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.runNextTimer();
+  assert.strictEqual(forceFlags.at(-1), true, '本地自选变化后必须全量同步');
+
+  harness.observers[0]();
+  harness.runNextTimer();
+  assert.strictEqual(forceFlags.at(-1), false, '无变化后的扫描应走增量快扫');
 });

@@ -57,6 +57,235 @@ test('findMainTable 在只有封闭基金表时返回 null', () => {
   assert.strictEqual(adapter.findMainTable(), null);
 });
 
+test('applyState 对已应用状态不重复写入按钮颜色样式', () => {
+  // 模拟浏览器行为：inline style 写入 hex 颜色后读回 rgb() 规范化值
+  const HEX_TO_RGB = { '#e67e22': 'rgb(230, 126, 34)', '#dd1817': 'rgb(221, 24, 23)' };
+  function makeStyle() {
+    const store = {};
+    let colorWrites = 0;
+    const style = {};
+    Object.defineProperty(style, 'color', {
+      get() { return Object.prototype.hasOwnProperty.call(store, 'color') ? store.color : ''; },
+      set(value) { colorWrites += 1; store.color = HEX_TO_RGB[value] || value; },
+    });
+    style.removeProperty = function (name) { delete store[name]; };
+    style.colorWriteCount = () => colorWrites;
+    return style;
+  }
+  function hook(kind) {
+    return {
+      kind,
+      name: '示例',
+      btn: {
+        style: makeStyle(),
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value; },
+        getAttribute(name) { return this.attributes[name] ?? null; },
+      },
+      icon: { textContent: '' },
+      nameSpan: { style: makeStyle() },
+    };
+  }
+  const adapter = loadAdapterWithDocument({});
+
+  const cb = hook('cb');
+  adapter.applyState(cb, true);
+  const writesAfterFirst = cb.btn.style.colorWriteCount();
+  assert.ok(writesAfterFirst >= 1, '首次应用状态应写入按钮颜色');
+  adapter.applyState(cb, true);
+  assert.strictEqual(cb.btn.style.colorWriteCount(), writesAfterFirst, '状态未变化时不得重复写入按钮颜色');
+  adapter.applyState(cb, false);
+  assert.ok(cb.btn.style.colorWriteCount() > writesAfterFirst, '切换状态应写入新颜色');
+
+  const qdii = hook('qdii');
+  adapter.applyState(qdii, true);
+  assert.strictEqual(qdii.nameSpan.style.color, 'rgb(221, 24, 23)');
+  adapter.applyState(qdii, false);
+  assert.strictEqual(qdii.nameSpan.style.color, '');
+  adapter.applyState(qdii, true);
+  assert.strictEqual(qdii.nameSpan.style.color, 'rgb(221, 24, 23)', '再次加入时必须恢复名称红色');
+});
+
+test('findMainTable 复用仍可见的已定位表格，失效后重新查找', () => {
+  const row = {
+    children: [
+      makeCell([]),
+      makeCell(['a[title^="加["]']),
+      makeCell(['a[href^="/data/convert_bond_detail/"]']),
+    ],
+  };
+  let visible = true;
+  let attached = true;
+  let lookups = 0;
+  const table = {
+    getClientRects: () => (visible ? [{}] : []),
+    querySelectorAll: () => [row],
+  };
+  const document = {
+    querySelectorAll: () => { lookups += 1; return attached ? [table] : []; },
+    contains: (el) => attached && (el === table || el === row),
+  };
+  const adapter = loadAdapterWithDocument(document);
+
+  assert.strictEqual(adapter.findMainTable(), table);
+  assert.strictEqual(adapter.findMainTable(), table, '重复定位应命中缓存');
+  assert.strictEqual(lookups, 1, '缓存有效时不得重新遍历文档');
+
+  visible = false;
+  assert.strictEqual(adapter.findMainTable(), null, '缓存表隐藏后应重新查找');
+  assert.ok(lookups >= 2, '缓存失效后必须重新遍历文档');
+});
+
+test('findMainTable 在缓存表被原地改成非可转债结构后重新定位', () => {
+  let valid = true;
+  let lookups = 0;
+  const row = {
+    children: [
+      makeCell([]),
+      { querySelector: () => (valid ? {} : null) },
+      { querySelector: () => (valid ? {} : null) },
+    ],
+  };
+  const table = {
+    getClientRects: () => [{}],
+    querySelectorAll: () => [row],
+  };
+  const document = {
+    querySelectorAll: () => { lookups += 1; return [table]; },
+    contains: (el) => el === table || el === row,
+  };
+  const adapter = loadAdapterWithDocument(document);
+
+  assert.strictEqual(adapter.findMainTable(), table);
+  valid = false;
+  assert.strictEqual(adapter.findMainTable(), null, '缓存命中前必须重新确认目标行结构');
+  assert.strictEqual(lookups, 2, '目标结构失效后必须重新遍历文档');
+});
+
+test('applyLocalFilter 在筛选保持关闭时不再遍历数据行', () => {
+  let dataRowsCalls = 0;
+  const container = { querySelector: () => null, appendChild() {} };
+  const document = {
+    getElementById: () => ({}),
+    createElement: () => ({
+      style: {},
+      attributes: {},
+      hidden: false,
+      textContent: '',
+      getAttribute(name) { return this.attributes[name] ?? null; },
+      setAttribute(name, value) { this.attributes[name] = value; },
+    }),
+  };
+  const adapter = loadAdapterWithDocument(document);
+  adapter.dataRows = () => { dataRowsCalls += 1; return []; };
+  const table = { closest: () => container, parentElement: container };
+
+  adapter.applyLocalFilter(table, new Set(), false);
+  adapter.applyLocalFilter(table, new Set(), false);
+  assert.strictEqual(dataRowsCalls, 1, '筛选保持关闭时不得重复遍历数据行');
+
+  adapter.applyLocalFilter(table, new Set(), true);
+  assert.strictEqual(dataRowsCalls, 2, '开启筛选必须遍历数据行');
+
+  adapter.applyLocalFilter(table, new Set(), false);
+  adapter.applyLocalFilter(table, new Set(), false);
+  assert.strictEqual(dataRowsCalls, 3, '从开启转关闭遍历一次，之后保持关闭不再遍历');
+});
+
+test('ensureButton 命中已同步标记时快速跳过，强制全量时仍完整处理', () => {
+  function makeElement(tag) {
+    return {
+      tagName: tag.toUpperCase(),
+      className: '',
+      textContent: '',
+      style: {},
+      attributes: {},
+      children: [],
+      appendChild(child) { this.children.push(child); },
+      setAttribute(name, value) { this.attributes[name] = value; },
+      getAttribute(name) { return this.attributes[name] ?? null; },
+      querySelector(selector) {
+        if (selector === ':scope > span.jisilu-icons') {
+          return this.children.find((child) => child.className === 'jisilu-icons') || null;
+        }
+        return null;
+      },
+    };
+  }
+  const localBtn = makeElement('a');
+  localBtn.className = 'jd-local-btn';
+  localBtn.attributes['data-jd-state'] = '1';
+  const opCell = {
+    querySelector(selector) {
+      return selector === ':scope > a.jd-local-btn' ? localBtn : null;
+    },
+  };
+  const codeCell = { querySelector: () => ({ textContent: '123456' }) };
+  const nameSpan = { textContent: '示例转债', style: {} };
+  const nameCell = { querySelector: () => nameSpan };
+  const tr = { children: [{}, opCell, codeCell, nameCell] };
+  const adapter = loadAdapterWithDocument({ createElement: makeElement });
+
+  const fastHook = adapter.ensureButton(tr, false);
+  assert.strictEqual(fastHook.fast, true, '已同步行应快速跳过');
+  assert.strictEqual(fastHook.code, undefined, '快速跳过结果不携带行数据');
+  assert.strictEqual(adapter.ensureButton(tr).fast, true, '未指定模式时默认允许快速跳过');
+
+  const hook = adapter.ensureButton(tr, true);
+  assert.strictEqual(hook.code, '123456', '强制全量时必须完整读取行');
+  assert.strictEqual(hook.nameCell, nameCell, '完整 hook 应携带名称格引用');
+});
+
+test('ensureFilterGroup 复用已注入筛选组，缓存有效时不重查原站按钮组', () => {
+  let groupLookups = 0;
+  function element(tag) {
+    return {
+      tagName: tag.toUpperCase(),
+      className: '',
+      textContent: '',
+      style: {},
+      attributes: {},
+      children: [],
+      isConnected: true,
+      getClientRects: () => [{}],
+      appendChild(child) { this.children.push(child); },
+      setAttribute(name, value) { this.attributes[name] = value; },
+      getAttribute(name) { return this.attributes[name] ?? null; },
+      querySelectorAll(selector) {
+        if (selector === 'button.jd-local-filter') {
+          return this.children.filter((child) => child.tagName === 'BUTTON' && child.className === 'jd-local-filter');
+        }
+        return [];
+      },
+    };
+  }
+  const showBlocked = element('div');
+  const group = element('div');
+  group.textContent = '仅看自选 仅看持仓';
+  group.nextSibling = showBlocked;
+  const bar = element('div');
+  let injected = null;
+  group.parentElement = bar;
+  bar.querySelector = () => injected;
+  bar.insertBefore = (node, before) => {
+    assert.strictEqual(before, showBlocked);
+    injected = node;
+  };
+  const document = {
+    querySelectorAll: () => { groupLookups += 1; return [group]; },
+    createElement: element,
+  };
+  const adapter = loadAdapterWithDocument(document);
+
+  const first = adapter.ensureFilterGroup(null);
+  assert.ok(first, '首次扫描应注入筛选组');
+  assert.strictEqual(groupLookups, 1);
+  const second = adapter.ensureFilterGroup('watchlist');
+  assert.strictEqual(second, first, '重复扫描应复用同一筛选组');
+  assert.strictEqual(groupLookups, 1, '缓存有效时不得重新查找原站按钮组');
+  assert.strictEqual(second.children[0].attributes['aria-pressed'], 'true', '缓存路径下仍应同步筛选状态');
+});
+
 test('applyState 不改变可转债名称颜色，但保留 QDII 名称标红', () => {
   const adapter = loadAdapterWithDocument({});
   function style(initialColor) {
@@ -83,7 +312,7 @@ test('applyState 不改变可转债名称颜色，但保留 QDII 名称标红', 
   const cb = hook('cb');
   adapter.applyState(cb, true);
   assert.strictEqual(cb.btn.style.color, '#dd1817');
-  assert.strictEqual(cb.nameSpan.style.color, undefined);
+  assert.strictEqual(cb.nameSpan.style.color, '');
 
   const qdii = hook('qdii');
   adapter.applyState(qdii, true);
@@ -154,6 +383,14 @@ test('ensurePurchaseButton 只为本地自选行注入名称旁待购入口并�
       style: {},
       attributes: {},
       parentElement: null,
+      children: [],
+      appendChild(child) { this.children.push(child); },
+      querySelector(selector) {
+        if (selector === ':scope > span.jisilu-icons') {
+          return this.children.find((child) => child.className === 'jisilu-icons') || null;
+        }
+        return null;
+      },
       setAttribute(name, value) { this.attributes[name] = value; },
       getAttribute(name) { return this.attributes[name] ?? null; },
       remove() {
@@ -166,6 +403,7 @@ test('ensurePurchaseButton 只为本地自选行注入名称旁待购入口并�
   const nameSpan = { textContent: '示例转债', style: {} };
   const nameCell = {
     children: [nameSpan],
+    style: {},
     querySelector(selector) {
       if (selector === 'span') return nameSpan;
       if (selector === ':scope > a.jd-purchase-btn') {
@@ -180,13 +418,20 @@ test('ensurePurchaseButton 只为本地自选行注入名称旁待购入口并�
       else this.children.splice(index, 0, child);
     },
   };
+  const opCell = {
+    children: [],
+    querySelector: () => null,
+    appendChild(child) { this.children.push(child); },
+  };
   const codeCell = {
     querySelector: () => ({ textContent: '123284' }),
   };
-  const row = { children: [{}, {}, codeCell, nameCell] };
+  const row = { children: [{}, opCell, codeCell, nameCell] };
   const adapter = loadAdapterWithDocument({ createElement: element });
 
-  const hook = adapter.ensurePurchaseButton(row, true);
+  const cbHook = adapter.ensureButton(row, true);
+  const hook = adapter.ensurePurchaseButton(cbHook, true);
+  assert.strictEqual(nameCell.style.whiteSpace, 'nowrap', '待购入口存在时名称和入口必须保持同行');
   adapter.applyPurchaseState(hook, false);
   assert.strictEqual(hook.btn.textContent, '+');
   assert.strictEqual(hook.btn.style.color, '#909399');
@@ -196,9 +441,14 @@ test('ensurePurchaseButton 只为本地自选行注入名称旁待购入口并�
   assert.strictEqual(hook.btn.textContent, '待购');
   assert.strictEqual(hook.btn.style.color, '#e67e22');
   assert.strictEqual(hook.btn.attributes['aria-pressed'], 'true');
-  assert.strictEqual(adapter.ensurePurchaseButton(row, true).btn, hook.btn, '重复扫描不得重复注入');
+  assert.strictEqual(
+    adapter.ensurePurchaseButton(adapter.ensureButton(row, true), true).btn,
+    hook.btn,
+    '重复扫描不得重复注入'
+  );
 
-  assert.strictEqual(adapter.ensurePurchaseButton(row, false), null);
+  assert.strictEqual(adapter.ensurePurchaseButton(adapter.ensureButton(row, true), false), null);
+  assert.strictEqual(nameCell.style.whiteSpace, '', '移出本地自选后应恢复名称格原始换行样式');
   assert.strictEqual(nameCell.children.includes(hook.btn), false, '移出本地自选后应清理待购入口');
 });
 
