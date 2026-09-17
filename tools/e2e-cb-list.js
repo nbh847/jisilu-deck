@@ -128,7 +128,7 @@ function clickAndAllowNavigation(session, expression) {
 function staticChecks() {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
   check('manifest 为 MV3', manifest.manifest_version === 3);
-  check('manifest 版本为 0.4.1', manifest.version === '0.4.1', manifest.version);
+  check('manifest 版本为 0.4.2', manifest.version === '0.4.2', manifest.version);
   check('权限只有 storage', JSON.stringify(manifest.permissions) === JSON.stringify(['storage']), JSON.stringify(manifest.permissions));
   const contentScript = manifest.content_scripts && manifest.content_scripts[0];
   check(

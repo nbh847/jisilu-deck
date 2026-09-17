@@ -2,7 +2,7 @@
 
 ## 当前版本
 
-`0.4.1` 已完成并通过验收；取消可转债加入本地自选后的名称标红，其他行为保持不变。
+`0.4.2` 本地发布文件已生成；可转债长列表性能修复已实现并通过单元测试，540 行弱机性能前后对照仍待完成。
 
 ## 进行中
 
@@ -34,6 +34,9 @@
 
 ## 验证基线
 
+- 2026-09-17 14:24：生成 `0.4.2` 发布文件前运行 `node --test`，44/44 通过；两个 E2E 脚本语法检查与 `git diff --check` 通过。ZIP 完整性检查通过，6/6 个包内文件与当前源码一致，Manifest 版本为 `0.4.2`。
+- 2026-09-17 14:24：`release/jisilu-deck-v0.4.2.zip` 已生成并校验：包含 6 个必要运行与说明文件，SHA-256 为 `5da8cc60af529033b28d3e6c658de2a45cf11d8f6297efeeeea6ff451a9d35ff`。
+- 2026-09-17 14:24：`release/jisilu-deck-v0.4.2-release-notes.md` 已生成，Release Title 为 `jisilu-deck v0.4.2`；约 540 行 Win10 弱机性能前后对照尚未完成，GitHub tag、Release 与附件尚未创建或上传。
 - 2026-09-17 14:15：提交前复核当前性能修复；`node --test` 44/44 通过，`git diff --check` 通过，`tools/e2e-cb-list.js` 与 `tools/e2e-qdii.js` 语法检查通过。真实 540 行弱机性能前后对照仍待完成，本次验证不改变该验收边界。
 - 2026-09-14 22:03：继续按 browser-skill CLI `0.2.1` 做真实验收；因 `bsk` 无法访问 `chrome://extensions`，本轮未能重新加载当前未打包扩展，E2E 结果不能单独证明工作区源码已被浏览器加载。QDII E2E `32/32` 通过；可转债首次 `47/48`，唯一失败为“待购标记紧跟名称且保持同一行”，重试在同一断言失败后又遇到 bsk RPC 超时，结果 `32/35`。重试产生的测试记录 `123285`、`110077` 已定向清理，原有 `127061`、`110081` 未改变；最终 `bsk session list --json` 返回 `[]`。当前 30 行可转债页面采集到 1 个筛选组、30 个本地按钮；连续 8 秒 `PerformanceObserver` 未捕获 Long Task（`0` 个、`0ms`），导航 `DOMContentLoaded` 约 `464.5ms`，该结果不等同于 540 行弱机前后对照。
 - 2026-09-14 21:24：按散帅要求撤回当前工作区未提交的 Playwright 迁移，恢复 `AGENTS.md`、`CLAUDE.md`、README、验证设计和两套 E2E 到 browser-skill／bsk；移除 `tools/playwright-cdp.js`。保留可转债长列表性能修复及其测试、性能架构文档和 `handoff.md`；`node --test` 44/44、两个 E2E 脚本语法检查、`git diff --check` 均通过。
